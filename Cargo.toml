@@ -1,9 +1,9 @@
 [package]
 name = "ekkles"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-iced = "0.13.1"
-log = "0.4.27"
-pretty_env_logger = "0.5.0"
+iced = {version = "0.13.1", default-features = false, features = ["wgpu"]}
+log = {version = "0.4.27"}
+pretty_env_logger = {version = "0.5.0"}
