@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# GUI Framework
 iced = {version = "0.13.1", default-features = false, features = ["wgpu"]}
+# Pro logování událostí v programu
 log = {version = "0.4.27"}
 pretty_env_logger = {version = "0.5.0"}
+# Jednoduchý error handling
+anyhow = "1.0.98"
+# Pro (pouze) čtení XML souborů
+roxmltree = { version = "0.20.0", default-features = false, features = ["std"] }
+# Zabudovaná SQlite databáze pro ukládání dat
+rusqlite = { version = "0.36.0", features = ["bundled"] }
