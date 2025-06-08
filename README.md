@@ -2,6 +2,13 @@
 
 Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
+## TODO
+
+- [ ] Zamyslet se, jestli zachovat nové řádky z načítané písně (zachování veršů jednotlivých slok). Může se to při promítání zdát podivné, že se jednotlivé verše nemapují na řádky.
+- [ ] Omezit délku tagu, mohl by to teoreticky být enum?
+- [ ] Validace při načítání písně (pokud je přítomné pořadí, kontrola, že všechny tagy v pořadí jsou přítomné i ve slovech)
+- [ ] Zamyslet se a napsat, jak ukládat písně v databázi
+
 ## Architektura
 
 ### GUI

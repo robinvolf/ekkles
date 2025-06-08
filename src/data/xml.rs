@@ -1,5 +1,10 @@
 //! Modul pro parsování dat z formátu, který používá [Opensong](https://opensong.org/development/file-formats/)
 //! do formátu používaného Ekklesem.
+//!
+//! ### Výkonnost
+//! Tento modul není napsán s ohledem na výkon, spousta klonování `String`ů,
+//! kde by se dalo něco znovupoužít. Pokud to bude problém, lze to přepsat,
+//! ale jelikož je to pouze pro jednorázový import, mělo by to být v pořádku
 
 use crate::data::{PartTag, Song};
 use anyhow::{Context, Result, bail};
