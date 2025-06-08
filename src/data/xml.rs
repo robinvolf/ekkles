@@ -4,7 +4,7 @@
 use crate::data::{PartTag, Song};
 use anyhow::{Context, Result, bail};
 use roxmltree::Document;
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, fs::read_to_string, path::Path};
 
 /// Název XML elementu obsahující název písně
 const XML_TITLE_ELEM_NAME: &str = "title";
@@ -16,8 +16,17 @@ const XML_LYRICS_ELEM_NAME: &str = "lyrics";
 const XML_ORDER_ELEM_NAME: &str = "presentation";
 
 impl Song {
+    /// Zparsuje XML dokument, obsahující píseň, nacházející se v souboru `file`.
+    /// Pokud se vše zdaří, vrátí načtenou píseň, jinak vrací Error.
+    ///
+    /// Více informací o způsobu parsování viz [`Song::parse_from_xml()`]
     pub fn parse_from_xml_file(file: &Path) -> Result<Self> {
-        todo!()
+        let xml = read_to_string(file)
+            .context(format!("Nepodařilo se přečíst soubor {}", file.display()))?;
+        let song = Song::parse_from_xml(&xml)
+            .context(format!("Nepodařilo se zparsovat soubor {}", file.display()))?;
+
+        Ok(song)
     }
 
     /// Zparsuje dokument písně `xml` v [XML formátu](https://opensong.org/development/file-formats/).
@@ -31,7 +40,7 @@ impl Song {
     ///
     /// Pokud je element `presentation` neprázdný, použije se pořadí z něj,
     /// jinak se použije pořadí zapsaných částí písně ve slovech.
-    fn parse_from_xml(xml: &str) -> Result<Self> {
+    pub fn parse_from_xml(xml: &str) -> Result<Self> {
         let document = Document::parse(xml).context("Nelze zparsovat XML")?;
 
         let title = document

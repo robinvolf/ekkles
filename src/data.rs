@@ -11,14 +11,14 @@ pub mod db;
 pub mod xml;
 
 /// Tag označující část písně, typicky něco jako "V1", "V2", "C" (sloka1, sloka2, refrén)
-type PartTag = String;
+pub type PartTag = String;
 
 /// Píseň
 ///
 /// ### Invarianty
 /// - Vektor `order` musí obsahovat *pouze* `PartTag`, které se nacházejí jako klíče v `parts`
 #[derive(Debug, PartialEq, Eq)]
-struct Song {
+pub struct Song {
     /// Název písně
     title: String,
     /// Volitelný autor písně
