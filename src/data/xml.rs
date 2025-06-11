@@ -8,6 +8,8 @@
 
 use crate::data::{PartTag, Song};
 use anyhow::{Context, Result, bail};
+use lazy_static::lazy_static;
+use regex::{self, Regex, RegexBuilder};
 use roxmltree::Document;
 use std::{collections::HashMap, fs::read_to_string, path::Path};
 
@@ -19,6 +21,16 @@ const XML_AUTHOR_ELEM_NAME: &str = "author";
 const XML_LYRICS_ELEM_NAME: &str = "lyrics";
 /// Název XML elementu obsahující pořadí částí písně
 const XML_ORDER_ELEM_NAME: &str = "presentation";
+
+lazy_static! {
+    /// Matchne řádek (včetně znaku nového řádku) s akordy.
+    static ref CHORD_AND_EMPTY_LINES_REGEX: Regex = RegexBuilder::new(r"(^\.[\w/ ]*\n)|(^\s*\n)")
+        .multi_line(true)
+        .build()
+        .unwrap();
+    /// Matchne vždy dvojici `[tag]\n slova...`, kde `tag` uloží do capture grupy `tag` a `slova` uloží do capture grupy `part`.
+    static ref TAG_VERSE_REGEX: Regex = Regex::new(r"\[(?P<tag>[^\]]+)\]\n(?P<part>[^\[\]]+)(?:\n|$)").unwrap();
+}
 
 impl Song {
     /// Zparsuje XML dokument, obsahující píseň, nacházející se v souboru `file`.
@@ -54,7 +66,7 @@ impl Song {
             .find(|elem| elem.tag_name().name() == XML_TITLE_ELEM_NAME)
             .context("Píseň musí mít název")?
             .text()
-            .unwrap() // Unwrap je v pořádku, protože jsme zkontrolovali, že je to element
+            .context("Název písně je prázdný")?
             .to_string();
 
         let author = document
@@ -63,18 +75,20 @@ impl Song {
             .find(|elem| elem.tag_name().name() == XML_AUTHOR_ELEM_NAME)
             .and_then(|node| node.text().map(|t| t.to_string()));
 
-        let mut lyrics = document
+        let raw_lyrics = document
             .descendants()
             .filter(|node| node.is_element())
             .find(|elem| elem.tag_name().name() == XML_LYRICS_ELEM_NAME)
             .context("Píseň musí obsahovat slova")?
             .text()
-            .unwrap() // Unwrap je v pořádku, protože jsme zkontrolovali, že je to element
+            .context("Slova písně jsou prázdné")?
             .to_string();
 
-        strip_chords_and_newlines(&mut lyrics);
-        let split_lyrics_with_tags =
-            split_into_parts(&lyrics).context("Chyba rozdělování písně na podčásti")?;
+        let lyrics = parse_lyrics(&raw_lyrics);
+        // Pokud jsou slova prázdné, nemá smysl ukládat píseň
+        if lyrics.is_empty() {
+            bail!("Nepodařilo se extrahovat slova z písně");
+        }
 
         let order = document
             .descendants()
@@ -83,12 +97,7 @@ impl Song {
             .and_then(|node| node.text())
             .map_or_else(
                 // Pokud XML obsahuje údaje o pořadí, využijeme je, jinak použijeme pořadí, jak jsou jednotlivé části zapsané
-                || {
-                    split_lyrics_with_tags
-                        .iter()
-                        .map(|(_lyric, tag)| tag.clone())
-                        .collect()
-                },
+                || lyrics.iter().map(|(tag, _lyric)| tag.clone()).collect(),
                 |text| {
                     let order: Vec<String> = text.split(' ').map(|s| s.to_string()).collect();
 
@@ -96,10 +105,7 @@ impl Song {
                 },
             );
 
-        let parts: HashMap<_, _> = split_lyrics_with_tags
-            .into_iter()
-            .map(|x| (x.1, x.0))
-            .collect();
+        let parts: HashMap<_, _> = lyrics.into_iter().map(|x| (x.0, x.1)).collect();
 
         Ok(Self {
             title,
@@ -110,74 +116,60 @@ impl Song {
     }
 }
 
-/// Odstraní akordy a znaky nového řádku ze slov písně. Akordy jsou řádky začínající znakem `'.'` (tečka).
-fn strip_chords_and_newlines(lyrics: &mut String) {
-    *lyrics = lyrics
-        .lines()
-        .filter(|&l| {
-            if l.len() > 0 && l.chars().nth(0).unwrap() == '.' {
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-}
-
+/// Zpracuje slova z jejich surové reprezentace v XML do vektoru dvojic `(tag, část)`.
+/// Zachová znaky nového řádku v jednotlivých částí, aby jednotlivé řádky reprezentovaly
+/// jednotlivé verše písně.
+///
+/// ### Výsledek
+/// Rozdělování probíhá na základě regulárních výrazů, v případě, že slova neodpovídají
+/// danému formátu, bude vrácen prázdný vektor.
+///
+/// ### Akordy
+/// Pokud jsou ve slovech přítomné akordy (řádky začínající `.`), jsou odstraněny.
+///
+/// ### Rozdělení
 /// Rozdělí slova do podčástí. Používá k tomu separátory, které vypadají následovně:
 /// `[` `tag` `]`, `tag` je libovolný řetězec znaků a je poté použit pro identifikaci dané části.
-///
-/// ### Návratová hodnota
-/// Vrací vektor dvojic `(slova, tag)`, pokud nastane chyba, vrací Error.
-///
-/// ### Implementace
-/// Na toto by se docela hodil regex, ale nechci ho mít v závislostech kvůli něčemu tak jednoduchému.
-/// Místo toho je tento proces implementován jednoduchým dvoustavovým konečným automatem (`processing_tag`).
-fn split_into_parts(lyrics: &str) -> Result<Vec<(String, PartTag)>> {
-    let mut result = Vec::new();
-    let mut processing_tag = false;
-    let mut current_lyric = String::new();
-    let mut current_tag = String::new();
-
-    for ch in lyrics.chars() {
-        match ch {
-            '[' if processing_tag => {
-                bail!("Nesprávný formát tagů, neukončená otevírací závorka \"[\"")
-            }
-            '[' => {
-                processing_tag = true;
-                if !current_lyric.is_empty() && !current_tag.is_empty() {
-                    // Kontrola na prázdnost, aby nám to na začátek nedalo dvojici prázdných řetězců
-                    result.push((
-                        current_lyric.trim().to_string(),
-                        current_tag.trim().to_string(),
-                    ));
-                    current_lyric.clear();
-                    current_tag.clear();
-                }
-            }
-            ']' if processing_tag => processing_tag = false,
-            ']' => bail!("Nesprávný formát tagů, přebytečná uzavírací závorka \"]\""),
-            _ if processing_tag => current_tag.push(ch),
-            _ => current_lyric.push(ch),
+fn parse_lyrics(raw_lyrics: &str) -> Vec<(PartTag, String)> {
+    // Odstranění whitespace znaků ze začátku a konce každého řádku
+    let trimmed = {
+        // Toto je strašlivý hack, potřeboval bych mezi každé dvě položky iterátoru strčit '\n',
+        // ale https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.intersperse není
+        // stabilizované, tudíž to musím strčit za každou položku a potom to odstranit za poslední
+        let mut trimmed: String = raw_lyrics
+            .lines()
+            .map(|line| {
+                let mut trimmed_line = line.trim().to_string();
+                trimmed_line.push('\n'); // lines() odstraňuje znaky nového řádku, musíme je zpátky přidat
+                trimmed_line
+            })
+            .collect();
+        match trimmed.pop() {
+            // Pokud jsme narazili na něco jiného než znak nového řádku, vrátíme ho zpátky
+            Some(ch) if ch != '\n' => trimmed.push(ch),
+            // Pokud je řetězec prázdný (None) nebo byl vrácen znak nového řádku, úspěch
+            _ => (),
         }
-    }
+        trimmed
+    };
 
-    // Musíme vložit ještě poslední, protože se vkládá vždy až při následujícím tagu (a poslední tag nemá žádný následující)
-    result.push((
-        current_lyric.trim().to_string(),
-        current_tag.trim().to_string(),
-    ));
+    // Odstranění řádků s akordy a prázdných řádků
+    let chordless_without_empty_lines = CHORD_AND_EMPTY_LINES_REGEX.replace_all(&trimmed, "");
 
-    return Ok(result);
+    // Extrakce dvojic (tag, slova)
+    TAG_VERSE_REGEX
+        .captures_iter(&chordless_without_empty_lines)
+        .map(|capture| (capture["tag"].to_string(), capture["part"].to_string()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const RAW_LYRICS: &str = r"[V1]
-.Bb                       F        Eb Bb
+    #[test]
+    fn parse_lyrics_test() {
+        const RAW_LYRICS: &str = r"[V1]
  Low in the grave He lay, Jesus my Savior!
 .Eb          Bb          Gm/Bb C      F
  Waiting the coming day, Je____sus my Lord!
@@ -206,44 +198,33 @@ mod tests {
 .Eb          Bb         Gm/Bb C      F
  He tore the bars away, Je____sus my Lord!";
 
-    const CHORDLESS_LYRICS: &str = "[V1] Low in the grave He lay, Jesus my Savior! Waiting the coming day, Je____sus my Lord![C] (Spirited!) Up from the grave He arose, With a mighty triumph o'er His foes; He arose a victor from the dark do_main, And He lives forever with His saints to   reign, He arose! He arose! Hallelujah! Christ arose![V2] Vainly they watch His bed, Jesus my Savior! Vainly they seal the dead, Je____sus my Lord![V3] Death cannot keep his prey, Jesus my Savior! He tore the bars away, Je____sus my Lord!";
-
-    #[test]
-    fn strip_chords_test() {
-        let mut input = RAW_LYRICS.to_string();
-        strip_chords_and_newlines(&mut input);
-        assert_eq!(input, CHORDLESS_LYRICS);
-    }
-
-    #[test]
-    fn split_into_parts_test() {
         let expected = vec![
             (
-                String::from(
-                    "Low in the grave He lay, Jesus my Savior! Waiting the coming day, Je____sus my Lord!",
-                ),
                 String::from("V1"),
+                String::from(
+                    "Low in the grave He lay, Jesus my Savior!\nWaiting the coming day, Je____sus my Lord!",
+                ),
             ),
             (
-                String::from(
-                    "(Spirited!) Up from the grave He arose, With a mighty triumph o'er His foes; He arose a victor from the dark do_main, And He lives forever with His saints to   reign, He arose! He arose! Hallelujah! Christ arose!",
-                ),
                 String::from("C"),
+                String::from(
+                    "(Spirited!) Up from the grave He arose,\nWith a mighty triumph o'er His foes;\nHe arose a victor from the dark do_main,\nAnd He lives forever with His saints to   reign,\nHe arose! He arose! Hallelujah! Christ arose!",
+                ),
             ),
             (
-                String::from(
-                    "Vainly they watch His bed, Jesus my Savior! Vainly they seal the dead, Je____sus my Lord!",
-                ),
                 String::from("V2"),
+                String::from(
+                    "Vainly they watch His bed, Jesus my Savior!\nVainly they seal the dead, Je____sus my Lord!",
+                ),
             ),
             (
-                String::from(
-                    "Death cannot keep his prey, Jesus my Savior! He tore the bars away, Je____sus my Lord!",
-                ),
                 String::from("V3"),
+                String::from(
+                    "Death cannot keep his prey, Jesus my Savior!\nHe tore the bars away, Je____sus my Lord!",
+                ),
             ),
         ];
-        let res = split_into_parts(CHORDLESS_LYRICS).expect("Slova jsou ve správném formátu");
+        let res = parse_lyrics(&RAW_LYRICS);
         assert_eq!(res, expected);
     }
 
@@ -352,25 +333,25 @@ mod tests {
                 (
                     String::from("V1"),
                     String::from(
-                        "Low in the grave He lay, Jesus my Savior! Waiting the coming day, Je____sus my Lord!",
+                        "Low in the grave He lay, Jesus my Savior!\nWaiting the coming day, Je____sus my Lord!",
                     ),
                 ),
                 (
                     String::from("C"),
                     String::from(
-                        "(Spirited!) Up from the grave He arose, With a mighty triumph o'er His foes; He arose a victor from the dark do_main, And He lives forever with His saints to   reign, He arose! He arose! Hallelujah! Christ arose!",
+                        "(Spirited!) Up from the grave He arose,\nWith a mighty triumph o'er His foes;\nHe arose a victor from the dark do_main,\nAnd He lives forever with His saints to   reign,\nHe arose! He arose! Hallelujah! Christ arose!",
                     ),
                 ),
                 (
                     String::from("V2"),
                     String::from(
-                        "Vainly they watch His bed, Jesus my Savior! Vainly they seal the dead, Je____sus my Lord!",
+                        "Vainly they watch His bed, Jesus my Savior!\nVainly they seal the dead, Je____sus my Lord!",
                     ),
                 ),
                 (
                     String::from("V3"),
                     String::from(
-                        "Death cannot keep his prey, Jesus my Savior! He tore the bars away, Je____sus my Lord!",
+                        "Death cannot keep his prey, Jesus my Savior!\nHe tore the bars away, Je____sus my Lord!",
                     ),
                 ),
             ]),
@@ -390,30 +371,30 @@ mod tests {
             parts: HashMap::from([
                 (
                     String::from("C"),
-                    String::from("Haleluja, haleluja, vládne nám všemocný Bůh a Král."),
+                    String::from("Haleluja, haleluja,\nvládne nám všemocný Bůh a Král."),
                 ),
                 (
                     String::from("V1a"),
                     String::from(
-                        "Haleluja, Svatý, Svatý, Svatý Pán Bůh Všemohoucí, hoden je On sám, Beránek, náš Pán, přijmout chválu,",
+                        "Haleluja, Svatý, Svatý,\nSvatý Pán Bůh Všemohoucí,\nhoden je On sám,\nBeránek, náš Pán,\npřijmout chválu,",
                     ),
                 ),
                 (
                     String::from("V1b"),
                     String::from(
-                        "Svatý, Svatý Pán Bůh Všemohoucí, hoden je On sám, Beránek, náš Pán, přijmout chválu.",
+                        "Svatý, Svatý Pán Bůh Všemohoucí,\nhoden je On sám,\nBeránek, náš Pán,\npřijmout chválu.",
                     ),
                 ),
                 (
                     String::from("V2a"),
                     String::from(
-                        "Haleluja, Svatý, Svatý, Ty jsi náš Bůh Všemohoucí, přijmi, Pane náš, přijmi, Pane náš, naši chválu,",
+                        "Haleluja, Svatý, Svatý,\nTy jsi náš Bůh Všemohoucí,\npřijmi, Pane náš,\npřijmi, Pane náš,\nnaši chválu,",
                     ),
                 ),
                 (
                     String::from("V2b"),
                     String::from(
-                        "Svatý, Ty jsi náš Bůh Všemohoucí, přijmi, Pane náš, přijmi, Pane náš, chválu.",
+                        "Svatý, Ty jsi náš Bůh Všemohoucí,\npřijmi, Pane náš,\npřijmi, Pane náš,\nchválu.",
                     ),
                 ),
             ]),
