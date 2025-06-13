@@ -2,12 +2,9 @@
 
 Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
-## TODO
+- Při vývoji je nejlepší na začátku použít `export DATABASE_URL='sqlite://db/database.sqlite3'` (bash) nebo `set -x DATABASE_URL=sqlite://db/database.sqlite3` (fish), pro nastavení URL vývojové databáze, závislost [sqlx](https://github.com/launchbadge/sqlx/tree/main?tab=readme-ov-file#compile-time-verification) používá makra pro verifikaci SQL dotazů při překladu (a skrze LSP i při vývoji v editoru)
 
-- [ ] Zamyslet se, jestli zachovat nové řádky z načítané písně (zachování veršů jednotlivých slok). Může se to při promítání zdát podivné, že se jednotlivé verše nemapují na řádky.
-- [ ] Omezit délku tagu, mohl by to teoreticky být enum?
-- [ ] Validace při načítání písně (pokud je přítomné pořadí, kontrola, že všechny tagy v pořadí jsou přítomné i ve slovech)
-- [ ] Zamyslet se a napsat, jak ukládat písně v databázi
+## TODO
 
 ## Architektura
 

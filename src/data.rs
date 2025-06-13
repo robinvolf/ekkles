@@ -5,6 +5,7 @@
 //!
 //! Zatím je to tu masivní TODO!
 
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 pub mod db;
@@ -27,4 +28,22 @@ pub struct Song {
     parts: HashMap<PartTag, String>,
     /// Pořadí jednotlivých částí písně, umožňuje opakování jedné části
     order: Vec<PartTag>,
+}
+
+impl Song {
+    /// Zkontroluje invariant, že všechny položky pořadí `order` jsou validní
+    /// tagy nacházející se v `parts`. Pokud ne, vrátí Error.
+    fn check_order_validity(&self) -> Result<()> {
+        for tag in self.order.iter() {
+            if !self.parts.contains_key(tag) {
+                bail!(
+                    "Píseň {} má v pořadí tag {}, ale ve slovech jej neobsahuje",
+                    self.title,
+                    tag
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
