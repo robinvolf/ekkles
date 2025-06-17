@@ -8,8 +8,9 @@
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 
+pub mod bible;
 pub mod db;
-pub mod xml;
+pub mod xml_song;
 
 /// Tag označující část písně, typicky něco jako "V1", "V2", "C" (sloka1, sloka2, refrén)
 pub type PartTag = String;
