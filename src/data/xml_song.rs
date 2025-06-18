@@ -29,7 +29,7 @@ lazy_static! {
         .build()
         .unwrap();
     /// Matchne vždy dvojici `[tag]\n slova...`, kde `tag` uloží do capture grupy `tag` a `slova` uloží do capture grupy `part`.
-    static ref TAG_VERSE_REGEX: Regex = Regex::new(r"\[(?P<tag>[^\]]+)\]\n(?P<part>[^\[\]]+)(?:\n|$)").unwrap();
+    static ref TAG_VERSE_REGEX: Regex = Regex::new(r"\[(?P<tag>[^\] ]+)\]\n(?P<part>[^\[\]]+)(?:\n|$)").unwrap();
 }
 
 impl Song {
@@ -166,6 +166,7 @@ fn parse_lyrics(raw_lyrics: &str) -> Vec<(PartTag, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn parse_lyrics_test() {
