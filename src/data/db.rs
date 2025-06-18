@@ -18,8 +18,8 @@ impl Song {
         self.check_order_validity()
             .context("Nelze uložit nevalidní píseň")?;
 
-        let mut connection = pool
-            .acquire()
+        let mut transaction = pool
+            .begin()
             .await
             .context("Nelze získat připojení k databázi z poolu")?;
 
@@ -27,14 +27,13 @@ impl Song {
 
         let song_id = query!(
             "
-            BEGIN TRANSACTION;
             INSERT INTO songs (title, author, part_order) VALUES ($1, $2, $3)
             ",
             self.title,
             self.author,
             part_order
         )
-        .execute(&mut *connection)
+        .execute(&mut *transaction)
         .await
         .context(format!("Nelze uložit píseň {} do databáze", self.title))?
         .last_insert_rowid();
@@ -42,28 +41,19 @@ impl Song {
         // TODO: Toto by šlo přepsat, abych místo sekvenčního ukládání spojil všechny query
         // do jedné future pomocí `join_all` a na tom awaitnout
         for (tag, lyrics) in self.parts.iter() {
-            let query_result = query!(
+            query!(
                 "INSERT INTO song_parts (song_id, tag, lyrics) VALUES ($1, $2, $3)",
                 song_id,
                 tag,
                 lyrics
             )
-            .execute(&mut *connection)
-            .await;
-
-            if let Err(e) = query_result {
-                // Zrušení předcházejících INSERTů
-                query!("ROLLBACK;")
-                    .execute(&mut *connection)
-                    .await
-                    .context("Nelze provést ROLLBACK selhaného uložení písně")?;
-
-                return Err(e).context(format!("Nelze uložit část {} písně {}", tag, self.title));
-            }
+            .execute(&mut *transaction)
+            .await
+            .with_context(|| format!("Nelze uložit část {} písně {}", tag, self.title))?;
         }
 
-        query!("COMMIT;")
-            .execute(&mut *connection)
+        transaction
+            .commit()
             .await
             .context("Nelze provést COMMIT uložení písně")?;
 
