@@ -2,9 +2,17 @@
 
 Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
-- Při vývoji je nejlepší na začátku použít `export DATABASE_URL='sqlite://db/database.sqlite3'` (bash) nebo `set -x DATABASE_URL=sqlite://db/database.sqlite3` (fish), pro nastavení URL vývojové databáze, závislost [sqlx](https://github.com/launchbadge/sqlx/tree/main?tab=readme-ov-file#compile-time-verification) používá makra pro verifikaci SQL dotazů při překladu (a skrze LSP i při vývoji v editoru)
-
 ## TODO
+
+- [ ] CLI utilitka pro import písní a biblí do SQLite databáze
+  - Jediný problém tu budou async funkce, musí se tam dát tokio runtime
+- [ ] Začít pracovat na GUI Ekklesu, vůbec zjistit jak rozumně udělat víc oken/přechody mezi nimi
+- [ ] Datový model pro playlist, aby pak šel z GUI ukládat, načítat, editovat (CRUD)
+
+## Vývoj
+
+- Na začátku je dobré spustit v adresáři `db` příkaz `sqlite3 database.sqlite3 < init_db.sql`, aby se poté `sqlx` mohlo ptát databáze při kompilaci na schéma
+  - Závislost [sqlx](https://github.com/launchbadge/sqlx/tree/main?tab=readme-ov-file#compile-time-verification) používá makra pro verifikaci SQL dotazů při překladu (a skrze LSP i při vývoji v editoru)
 
 ## Architektura
 
