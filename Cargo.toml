@@ -23,6 +23,6 @@ regex = "1.11.1"
 [dev-dependencies]
 # Na tokiu už jsem závislý skrze iced a a sqlx, ale abych měl přístup ke věcem z tokia
 # (např. anotace pro testy async funkcí), natáhnu si to i přímo ve stejné verzi.
-tokio = {version = "1.44.2", features = ["test-util"]}
+tokio = {version = "1.44.2", features = ["macros"]}
 # Aby v testech byly přehledné barevné diffy
 pretty_assertions = "1.4.1"
