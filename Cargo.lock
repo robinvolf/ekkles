@@ -668,6 +668,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ekkles_cli"
+version = "0.1.0"
+
+[[package]]
 name = "ekkles_data"
 version = "0.1.0"
 dependencies = [

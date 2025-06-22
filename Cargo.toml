@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["ekkles_data"]
+members = [ "ekkles_cli","ekkles_data"]
 
 [package]
 name = "ekkles"
