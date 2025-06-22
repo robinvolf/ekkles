@@ -6,7 +6,7 @@
 //! kde by se dalo něco znovupoužít. Pokud to bude problém, lze to přepsat,
 //! ale jelikož je to pouze pro jednorázový import, mělo by to být v pořádku
 
-use crate::data::{PartTag, Song};
+use crate::{PartTag, Song};
 use anyhow::{Context, Result, bail};
 use lazy_static::lazy_static;
 use regex::{self, Regex, RegexBuilder};

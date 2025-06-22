@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 # Pro (pouze) čtení XML souborů
-roxmltree = { version = "0.20.0", default-features = false, features = ["std"] }
+roxmltree = { version = "0.20.0", default-features = false, features = ["std", "positions"] }
 # Manipulace s databází (zabudovaná sqlite)
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 # Pro jednorázovou inicializaci regexů

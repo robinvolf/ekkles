@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::data::Song;
+use crate::Song;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use sqlx::{SqlitePool, query};
@@ -121,7 +121,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::data::bible::tests::setup_db;
+    use crate::setup_db;
 
     #[tokio::test]
     async fn save_load_happy_path() {

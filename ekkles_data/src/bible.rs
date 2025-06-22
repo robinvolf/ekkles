@@ -2,7 +2,7 @@
 //! z [tohoto repa](https://github.com/Beblia/Holy-Bible-XML-Format/tree/master)
 //! a ukládání do lokální SQLite databáze.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use roxmltree::{Document, Node, TextPos};
 use sqlx::{SqlitePool, query};
 
@@ -179,20 +179,11 @@ fn book_number_to_order(number: u32) -> u32 {
 }
 
 #[cfg(test)]
-// Modul a funkce setup_db() jsou pub, aby šly znovupoužít v jiných testech
-pub mod tests {
+mod tests {
     use super::*;
+    use crate::setup_db;
     use pretty_assertions::assert_eq;
-    use sqlx::{SqlitePool, query_file};
     use tokio::fs::read_to_string;
-
-    pub async fn setup_db() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-
-        query_file!("db/init_db.sql").execute(&pool).await.unwrap();
-
-        pool
-    }
 
     #[tokio::test]
     async fn bible_db_happy_path() {
