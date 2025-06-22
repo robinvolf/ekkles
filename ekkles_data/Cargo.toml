@@ -1,0 +1,24 @@
+[package]
+name = "ekkles_data"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+# Pro (pouze) čtení XML souborů
+roxmltree = { version = "0.20.0", default-features = false, features = ["std"] }
+# Manipulace s databází (zabudovaná sqlite)
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+# Pro jednorázovou inicializaci regexů
+lazy_static = "1.5.0"
+# Pro parsování slov z XML dokumentů písní
+regex = "1.11.1"
+# V jednu chvíli pracuju se Streamem a potřebuju metody traitu TryStreamExt z futures
+futures = "0.3.31"
+
+[dev-dependencies]
+# Na spouštění testů asynchronních funkcí
+tokio = {version = "1.44.2", features = ["macros"]}
+# Aby v testech byly přehledné barevné diffy
+pretty_assertions = "1.4.1"
+

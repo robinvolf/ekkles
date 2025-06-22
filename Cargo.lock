@@ -658,11 +658,23 @@ name = "ekkles"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ekkles_data",
  "iced",
- "lazy_static",
  "log",
  "pretty_assertions",
  "pretty_env_logger",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "ekkles_data"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "lazy_static",
+ "pretty_assertions",
  "regex",
  "roxmltree",
  "sqlx",

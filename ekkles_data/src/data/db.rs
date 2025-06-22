@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::data::Song;
 use anyhow::{Context, Result};
-use iced::futures::TryStreamExt;
+use futures::TryStreamExt;
 use sqlx::{SqlitePool, query};
 
 const TAG_SPLIT_STRING: &str = " ";

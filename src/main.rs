@@ -1,7 +1,7 @@
+use iced::Task;
 use iced::widget::{column, container, text};
 use iced::window::{self, Id, Settings};
-use iced::Task;
-use iced::{widget::button, Element};
+use iced::{Element, widget::button};
 use log::{debug, info};
 
 const PROGRAM_NAME: &str = "Ekkles";
