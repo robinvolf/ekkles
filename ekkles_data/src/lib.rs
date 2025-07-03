@@ -23,13 +23,13 @@ pub type PartTag = String;
 #[derive(Debug, PartialEq, Eq)]
 pub struct Song {
     /// Název písně
-    title: String,
+    pub title: String,
     /// Volitelný autor písně
-    author: Option<String>,
+    pub author: Option<String>,
     /// Jednotlivé části písně "adresované" Tagem
-    parts: HashMap<PartTag, String>,
+    pub parts: HashMap<PartTag, String>,
     /// Pořadí jednotlivých částí písně, umožňuje opakování jedné části
-    order: Vec<PartTag>,
+    pub order: Vec<PartTag>,
 }
 
 impl Song {

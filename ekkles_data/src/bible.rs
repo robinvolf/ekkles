@@ -27,7 +27,7 @@ const NUM_BOOKS_IN_THE_BIBLE: usize = 66;
 /// ### Implementace
 /// Parsuje formát z [tohoto repa](https://github.com/Beblia/Holy-Bible-XML-Format/tree/master).
 /// Nejdřív uloží nový název překladu do databáze a poté začne ukládat jednotlivé verše.
-async fn parse_bible_from_xml(xml: &str, pool: &SqlitePool) -> Result<()> {
+pub async fn parse_bible_from_xml(xml: &str, pool: &SqlitePool) -> Result<()> {
     let document = Document::parse(xml).context("Nelze zparsovat XML")?;
 
     // Používáme transakci, abychom mohli na konci po úspěšném zparsování spustit `commit()`,
