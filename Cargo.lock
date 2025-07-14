@@ -771,6 +771,7 @@ dependencies = [
  "clap",
  "ekkles_data",
  "sqlx",
+ "tokio",
 ]
 
 [[package]]

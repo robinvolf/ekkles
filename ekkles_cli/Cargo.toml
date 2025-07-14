@@ -9,3 +9,5 @@ clap = { version = "4.5.40", features = ["derive"] }
 ekkles_data = { path = "../ekkles_data"}
 # Manipulace s databází (zabudovaná sqlite)
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+# Async runtime (používám async knihovnu sqlx)
+tokio = {version = "1.44.2", features = ["macros"]}
