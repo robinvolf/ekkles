@@ -69,6 +69,26 @@ impl Song {
         Ok(song_id)
     }
 
+    /// Pokud píseň s názvem `title` v databázi existuje, vrátí její `id`, pokud se
+    /// vystkytne při přístupu do databáze chyba nebo daná píseň neexistuje, vrátí Error.
+    pub async fn exists_in_db(title: &str, pool: &SqlitePool) -> Result<i64> {
+        query!("SELECT id FROM songs WHERE title = $1", title)
+            .fetch_one(pool)
+            .await
+            .with_context(|| format!("Píseň s názvem '{}' nebyla nalezena", title))
+            .map(|record| record.id.unwrap())
+    }
+
+    /// Smaže píseň s daným `id` z databáze, pokud nastane problém vrátí Error.
+    pub async fn delete_from_db(id: i64, pool: &SqlitePool) -> Result<()> {
+        query!("DELETE FROM songs WHERE id = $1", id)
+            .execute(pool)
+            .await
+            .with_context(|| format!("Nelze smazat píseň s id {} z databáze", id))?;
+
+        Ok(())
+    }
+
     /// Načte píseň s `id` z SQLite databáze pomocí `pool`.
     ///
     /// ### Ošetření chyb

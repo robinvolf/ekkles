@@ -1,30 +1,36 @@
-CREATE TABLE IF NOT EXISTS songs (
+DROP TABLE IF EXISTS songs;
+DROP TABLE IF EXISTS song_parts;
+DROP TABLE IF EXISTS translations;
+DROP TABLE IF EXISTS books;
+DROP TABLE IF EXISTS verses;
+
+CREATE TABLE songs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL UNIQUE,
     author TEXT,
     part_order TEXT NOT NULL -- Vektor uložený jako text, trochu hack
 );
 
-CREATE TABLE IF NOT EXISTS song_parts (
+CREATE TABLE song_parts (
     song_id INTEGER NOT NULL,
     tag TEXT NOT NULL,
     lyrics TEXT NOT NULL,
     PRIMARY KEY (song_id, tag),
-    FOREIGN KEY (song_id) REFERENCES songs (id)
+    FOREIGN KEY (song_id) REFERENCES songs (id) ON DELETE CASCADE -- Při smazání písně budou automaticky smazány všechny její části
 );
 
-CREATE TABLE IF NOT EXISTS translations (
+CREATE TABLE translations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS books (
+CREATE TABLE books (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_order INTEGER NOT NULL UNIQUE, -- Pořadí knih v Bible (Genesis, Exodus, ... Zjevení)
     title TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS verses (
+CREATE TABLE verses (
     translation_id INTEGER NOT NULL,
     book_id INTEGER NOT NULL,
     chapter INTEGER NOT NULL,
