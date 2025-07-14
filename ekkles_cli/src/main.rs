@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
-use ekkles_data::Song;
+use ekkles_data::{Song, bible::parse_bible_from_xml};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::path::PathBuf;
+use tokio::fs::read_to_string;
 
 /// Malá utilitka k programu Ekkles, která slouží k importu písní (ve formátu Opensongu)
 /// a biblí (ve formátu z github repozitáře) do databáze Ekklesu.
@@ -50,22 +51,41 @@ async fn run(config: Cli) -> Result<()> {
     println!("Úspěch + Selhání / Celkem");
     for input_file in config.input_files {
         match config.parse_kind {
-            ParseKind::Bible => todo!(),
+            ParseKind::Bible => {
+                let xml = read_to_string(&input_file)
+                    .await
+                    .with_context(|| format!("Nelze přečíst soubor {}", input_file.display()))?;
+                match parse_bible_from_xml(&xml, &db_pool).await {
+                    Ok(_) => successes += 1,
+                    Err(err) => {
+                        eprintln!(
+                            "Nelze zpracovat a uložit soubor {}: {}",
+                            input_file.display(),
+                            err
+                        );
+                        fails += 1;
+                    }
+                }
+            }
             ParseKind::Song => {
                 let res = Song::parse_from_xml_file(&input_file);
                 match res {
                     Ok(song) => {
-                        if config.overwrite_records {
-                            todo!()
-                        } else {
-                            match song.save_to_db(&db_pool).await {
-                                Ok(_) => successes += 1,
-                                Err(err) => {
-                                    eprintln!("{:?}", err);
-                                    fails += 1;
-                                }
-                            };
+                        if config.overwrite_records
+                            && let Ok(id) = Song::exists_in_db(&song.title, &db_pool).await
+                        {
+                            // Pokud píseň existuje, nejdříve ji vymažeme a uložíme novou
+                            Song::delete_from_db(id, &db_pool).await?;
+                            println!("[INFO]: Přepisuju píseň '{}'", &song.title);
                         }
+
+                        match song.save_to_db(&db_pool).await {
+                            Ok(_) => successes += 1,
+                            Err(err) => {
+                                eprintln!("[ERROR]: {:?}", err);
+                                fails += 1;
+                            }
+                        };
                     }
                     Err(err) => {
                         eprintln!(
@@ -76,9 +96,10 @@ async fn run(config: Cli) -> Result<()> {
                         fails += 1;
                     }
                 }
-                println!("{:04}   + {:04}    / {:04}", successes, fails, total);
             }
         }
+
+        println!("{:04}   + {:04}    / {:04}", successes, fails, total);
     }
 
     println!("=== HOTOVO ===");
@@ -94,6 +115,8 @@ async fn main() -> Result<()> {
 
     if config.input_files.is_empty() {
         bail!("Nebyly zadány žádné vstupní soubory k parsování, končím");
+    } else if config.overwrite_records && config.parse_kind == ParseKind::Bible {
+        eprintln!("[WARN]: Překlady Bible se nemění, volba overwrite, nebude mít žádný efekt");
     }
 
     run(config).await
