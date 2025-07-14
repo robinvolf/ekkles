@@ -7,6 +7,7 @@ use roxmltree::{Document, Node, TextPos};
 use sqlx::{SqlitePool, query};
 
 const XML_TRANSLATION_NAME_ATTRIBUTE: &str = "translation";
+const XML_TRANSLATION_NAME_ATTRIBUTE_SECONDARY: &str = "name";
 const XML_BOOK_NUMBER_ATTRIBUTE: &str = "number";
 const XML_CHAPTER_NUMBER_ATTRIBUTE: &str = "number";
 const XML_VERSE_NUMBER_ATTRIBUTE: &str = "number";
@@ -40,6 +41,11 @@ pub async fn parse_bible_from_xml(xml: &str, pool: &SqlitePool) -> Result<()> {
     let translation_name = document
         .root_element()
         .attribute(XML_TRANSLATION_NAME_ATTRIBUTE)
+        .or_else(|| {
+            document
+                .root_element()
+                .attribute(XML_TRANSLATION_NAME_ATTRIBUTE_SECONDARY)
+        })
         .context("V Dokumentu chybí atribut názvu překladu")?;
 
     let translation_id = query!(
