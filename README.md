@@ -4,7 +4,7 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
 ## TODO
 
-- [ ] CLI utilitka pro import písní a biblí do SQLite databáze
+- [X] CLI utilitka pro import písní a biblí do SQLite databáze
   - Jediný problém tu budou async funkce, musí se tam dát tokio runtime
 - [ ] Začít pracovat na GUI Ekklesu, vůbec zjistit jak rozumně udělat víc oken/přechody mezi nimi
 - [ ] Datový model pro playlist, aby pak šel z GUI ukládat, načítat, editovat (CRUD)
