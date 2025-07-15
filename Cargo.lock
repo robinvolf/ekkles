@@ -781,6 +781,7 @@ dependencies = [
  "anyhow",
  "futures",
  "lazy_static",
+ "log",
  "pretty_assertions",
  "regex",
  "roxmltree",

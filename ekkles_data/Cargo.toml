@@ -15,6 +15,7 @@ lazy_static = "1.5.0"
 regex = "1.11.1"
 # V jednu chvíli pracuju se Streamem a potřebuju metody traitu TryStreamExt z futures
 futures = "0.3.31"
+log = {version = "0.4.27"}
 
 [dev-dependencies]
 # Na spouštění testů asynchronních funkcí

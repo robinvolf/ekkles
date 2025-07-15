@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail};
 use roxmltree::{Document, Node, TextPos};
 use sqlx::{SqlitePool, query};
 
+mod indexing;
+
 const XML_TRANSLATION_NAME_ATTRIBUTE: &str = "translation";
 const XML_TRANSLATION_NAME_ATTRIBUTE_SECONDARY: &str = "name";
 const XML_BOOK_NUMBER_ATTRIBUTE: &str = "number";

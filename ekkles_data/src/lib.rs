@@ -58,7 +58,18 @@ impl Song {
     }
 }
 
+enum PlaylistItem {
+    BiblePassage,
+    Song(Song),
+}
+
+struct Playlist {
+    id: i64,
+    items: Vec<PlaylistItem>,
+}
+
 // Funkce na vytvoření in-memory databáze pro testování
+// Je to tady, aby všechny podmoduly mohly využít tuto funkci v testech
 #[cfg(test)]
 use sqlx::SqlitePool;
 #[cfg(test)]
