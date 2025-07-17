@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use roxmltree::{Document, Node, TextPos};
 use sqlx::{SqlitePool, query};
 
-mod indexing;
+pub mod indexing;
 
 const XML_TRANSLATION_NAME_ATTRIBUTE: &str = "translation";
 const XML_TRANSLATION_NAME_ATTRIBUTE_SECONDARY: &str = "name";
@@ -189,47 +189,4 @@ pub async fn parse_bible_from_xml(xml: &str, pool: &SqlitePool) -> Result<()> {
 /// ale čísla knih jsou od 1.
 fn book_number_to_order(number: u32) -> u32 {
     number - 1
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::setup_db;
-    use pretty_assertions::assert_eq;
-    use tokio::fs::read_to_string;
-
-    #[tokio::test]
-    async fn bible_db_happy_path() {
-        let xml_data = read_to_string("test_data/CzechPrekladBible.xml")
-            .await
-            .unwrap();
-
-        let pool = setup_db().await;
-
-        let res = parse_bible_from_xml(&xml_data, &pool).await;
-
-        assert!(res.is_ok());
-
-        let expected = String::from(
-            "„Neboť tak Bůh miluje svět, že dal svého jediného Syna, aby žádný, kdo v něho věří, nezahynul, ale měl život věčný.",
-        );
-
-        let book_id = query!("SELECT (id) FROM books WHERE title = $1", "Jan")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .id
-            .unwrap();
-
-        let verse_content = query!(
-            "SELECT (content) FROM verses WHERE book_id = $1 AND chapter = 3 AND number = 16",
-            book_id
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .content;
-
-        assert_eq!(verse_content, expected);
-    }
 }

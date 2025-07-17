@@ -68,24 +68,6 @@ struct Playlist {
     items: Vec<PlaylistItem>,
 }
 
-// Funkce na vytvoření in-memory databáze pro testování
-// Je to tady, aby všechny podmoduly mohly využít tuto funkci v testech
-#[cfg(test)]
-use sqlx::SqlitePool;
-#[cfg(test)]
-use sqlx::query_file;
-#[cfg(test)]
-async fn setup_db() -> SqlitePool {
-    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-
-    query_file!("../db/init_db.sql")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    pool
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

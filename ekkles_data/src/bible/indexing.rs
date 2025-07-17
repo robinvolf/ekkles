@@ -10,7 +10,7 @@ use std::{fmt::Display, ops::RangeInclusive};
 /// To, kde se pasáž nachází je určeno dvěma odkazy - počátkem (`from`) a koncem (`to`).
 /// Fungují jako [`RangeInclusive`], tedy, pokud `from == to`, znamená to,
 /// že pasáž obsahuje jeden verš.
-struct Passage {
+pub struct Passage {
     /// Id překladu v databázi
     translation_id: i64,
     /// Člověkem čitelný název překladu
@@ -27,7 +27,7 @@ impl Passage {
     /// Načte pasáž od verše `from` po verš `to` (včetně) v překladu identifikovaného
     /// daným `id` z databáze pomocí poolu připojení `pool`. Pokud je `from` až po `to`
     /// nebo je chyba s databází vrací Error.
-    async fn load_passage(
+    pub async fn load(
         from: VerseIndex,
         to: VerseIndex,
         translation_id: i64,
@@ -93,6 +93,16 @@ impl Passage {
         })
     }
 
+    /// Vrátí read-only referenci pro čtení veršů pasáže
+    pub fn get_verses(&self) -> &[(u8, String)] {
+        &self.verses
+    }
+
+    /// Vrátí rozsah pasáže - dvojici (od, do)
+    pub fn get_range(&self) -> (VerseIndex, VerseIndex) {
+        (self.from, self.to)
+    }
+
     /// Zkontroluje, že rozsah pasáže je validní (první verš je v Bibli "dřív" než poslední)
     fn is_valid(&self) -> bool {
         if self.from > self.to { false } else { true }
@@ -103,7 +113,7 @@ impl Passage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 // Zde můžeme derivenout Eq/Ord, protože se bude porovnávat jedna položka podruhé
 // (book -> chapter -> verse), což je přesně, co chceme
-struct VerseIndex {
+pub struct VerseIndex {
     book: Book,
     // Nejdelší kniha má 150 kapitol (žalmy), u8 postačí
     chapter: u8,
@@ -1414,7 +1424,7 @@ fn chapters_in_book(book: Book) -> RangeInclusive<u8> {
 /// Tento enum je reprezentován jako u8, tedy casty `Book::_ as u8` je bezpečné.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
-enum Book {
+pub enum Book {
     Genesis = 0,
     Exodus = 1,
     Leviticus = 2,
