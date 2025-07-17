@@ -46,14 +46,51 @@ impl Passage {
         .with_context(|| format!("Nepodařilo se načíst překlad s id {translation_id} z databáze"))?
         .name;
 
-        // TODO:
-        // - Načítat verše knihu po knize, kapitolu po kapitole,
+        // Zjistíme čísla pořadí, abychom se mohli jednoduše zeptat na rozsah
+        let book_number_start = from.book as u8;
+        let book_number_end = to.book as u8;
 
-        // let verses = query!(
-        //     "SELECT number, content FROM verses WHERE translation_id = $1 AND book_id >= $2 AND book_id <= $3 AND chapter >= $4 AND chapter <= $5 ;"
-        // );
+        let verse_order_start = query!(
+            "SELECT verse_order FROM verses WHERE translation_id = $1 AND book_id = $2 AND chapter = $3 AND number = $4",
+            translation_id,
+            book_number_start,
+            from.chapter,
+            from.verse_number
+        )
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("Nepodařilo se načíst pořadové číslo verše na začátku pasáže {:?}", from))?
+        .verse_order;
 
-        todo!()
+        let verse_order_end = query!(
+            "SELECT verse_order FROM verses WHERE translation_id = $1 AND book_id = $2 AND chapter = $3 AND number = $4",
+            translation_id,
+            book_number_end,
+            to.chapter,
+            to.verse_number
+        )
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("Nepodařilo se načíst pořadové číslo verše na začátku pasáže {:?}", from))?
+        .verse_order;
+
+        let verses = query!(
+            "SELECT number, content FROM verses WHERE verse_order >= $1 AND verse_order <= $2;",
+            verse_order_start,
+            verse_order_end,
+        )
+        .map(|record| (record.number as u8, record.content))
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("Nepodařilo se načíst verše z databáze"))?;
+
+        Ok(Self {
+            translation_id,
+            translation_name,
+            from,
+            to,
+            verses,
+        })
     }
 
     /// Zkontroluje, že rozsah pasáže je validní (první verš je v Bibli "dřív" než poslední)
@@ -72,6 +109,20 @@ struct VerseIndex {
     chapter: u8,
     // Nejdelší kniha má 176 veršů (žalm 119), u8 postačí
     verse_number: u8,
+}
+
+impl VerseIndex {
+    pub fn try_new(book: Book, chapter: u8, verse: u8) -> Option<Self> {
+        if verses_in_chapter(book, chapter).is_none_or(|range| !range.contains(&verse)) {
+            None
+        } else {
+            Some(Self {
+                book,
+                chapter,
+                verse_number: verse,
+            })
+        }
+    }
 }
 
 /// Vrátí rozsah veršů kapitoly dané knihy.
@@ -1353,19 +1404,16 @@ fn chapters_in_book(book: Book) -> RangeInclusive<u8> {
     }
 }
 
-impl VerseIndex {
-    pub fn is_valid(&self) -> bool {
-        verses_in_chapter(self.book, self.chapter)
-            .is_some_and(|range| range.contains(&self.verse_number))
-    }
-}
-
 /// Knihy v Bibli.
 ///
 /// ### Index
 /// Číselná reprezentace tohoto enumu tvoří index do tabulky knih v databázi,
 /// je velmi důležité, aby zůstala synchronizována s databází.
+///
+/// ### Reprezentace
+/// Tento enum je reprezentován jako u8, tedy casty `Book::_ as u8` je bezpečné.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
 enum Book {
     Genesis = 0,
     Exodus = 1,
@@ -1506,5 +1554,22 @@ impl Display for Book {
             Book::Revelation => "Zjevení",
         };
         f.write_str(str)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verse_index_creation_test() {
+        let valid = VerseIndex::try_new(Book::Romans, 3, 23);
+        let invalid = VerseIndex::try_new(Book::Daniel, 16, 55);
+
+        assert!(valid.is_some(), "Římanům 3:23 je validní odkaz");
+        assert!(
+            invalid.is_none(),
+            "Daniel 16:55 neexistuje, nevalidní odkaz"
+        );
     }
 }

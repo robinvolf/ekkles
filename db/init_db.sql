@@ -36,6 +36,8 @@ CREATE TABLE verses (
     chapter INTEGER NOT NULL,
     number INTEGER NOT NULL,
     content TEXT NOT NULL,
+    -- Pořadí veršů v daném překladu, abychom se mohli jednoduše dotazovat na rozsahy
+    verse_order INTEGER NOT NULL,
     PRIMARY KEY (translation_id, book_id, chapter, number),
     FOREIGN KEY (book_id) REFERENCES books (id),
     FOREIGN KEY (translation_id) REFERENCES translations (id)

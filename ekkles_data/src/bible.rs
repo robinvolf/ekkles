@@ -84,6 +84,8 @@ pub async fn parse_bible_from_xml(xml: &str, pool: &SqlitePool) -> Result<()> {
         document.text_pos_at(start_byte)
     };
 
+    let mut verse_order = 0;
+
     for book in books {
         let book_number = book
             .attribute(XML_BOOK_NUMBER_ATTRIBUTE)
@@ -156,17 +158,20 @@ pub async fn parse_bible_from_xml(xml: &str, pool: &SqlitePool) -> Result<()> {
 
                 query!(
                         "
-                        INSERT INTO verses (translation_id, book_id, chapter, number, content) VALUES ($1, $2, $3, $4, $5);
+                        INSERT INTO verses (translation_id, book_id, chapter, number, content, verse_order) VALUES ($1, $2, $3, $4, $5, $6);
                         ",
                         translation_id,
                         book_id,
                         chapter_number,
                         verse_number,
                         verse_content,
+                        verse_order,
                     )
                     .execute(&mut *transaction)
                     .await
                     .context("Nelze uložit verš")?;
+
+                verse_order += 1;
             }
         }
     }
