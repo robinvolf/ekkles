@@ -3,6 +3,10 @@ DROP TABLE IF EXISTS song_parts;
 DROP TABLE IF EXISTS translations;
 DROP TABLE IF EXISTS books;
 DROP TABLE IF EXISTS verses;
+DROP TABLE IF EXISTS playlists;
+DROP TABLE IF EXISTS playlist_parts;
+DROP TABLE IF EXISTS playlist_songs;
+DROP TABLE IF EXISTS playlist_passages;
 
 CREATE TABLE IF NOT EXISTS songs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +45,48 @@ CREATE TABLE IF NOT EXISTS verses (
     PRIMARY KEY (translation_id, book_id, chapter, number),
     FOREIGN KEY (book_id) REFERENCES books (id),
     FOREIGN KEY (translation_id) REFERENCES translations (id)
+);
+
+CREATE TABLE IF NOT EXISTS playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    -- Kdy byl playlist vytvořen, může být použito pro řazení playlistů
+    created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- playlist_part může být buď pasáž z Bible nebo píseň (v budoucnu možná další),
+-- vytvoříme tedy pro každou možnost separátní tabulku, ze které se budeme odkazovat
+-- na PK tabulky `playlist_parts`
+CREATE TABLE IF NOT EXISTS playlist_parts (
+    playlist_id INTEGER NOT NULL,
+    part_order INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('song', 'bible')),
+    PRIMARY KEY (playlist_id, part_order),
+    FOREIGN KEY (playlist_id) REFERENCES playlists (id)
+);
+
+CREATE TABLE IF NOT EXISTS playlist_songs (
+    playlist_id INTEGER NOT NULL,
+    part_order INTEGER NOT NULL,
+    song_id INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, part_order),
+    FOREIGN KEY (song_id) REFERENCES songs (id)
+);
+
+CREATE TABLE IF NOT EXISTS playlist_passages (
+    playlist_id INTEGER NOT NULL,
+    part_order INTEGER NOT NULL,
+    start_translation_id INTEGER NOT NULL,
+    start_book_id INTEGER NOT NULL,
+    start_chapter INTEGER NOT NULL,
+    start_number INTEGER NOT NULL,
+    end_translation_id INTEGER NOT NULL,
+    end_book_id INTEGER NOT NULL,
+    end_chapter INTEGER NOT NULL,
+    end_number INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, part_order),
+    FOREIGN KEY (start_translation_id, start_book_id, start_chapter, start_number) REFERENCES verses (translation_id, book_id, chapter, number),
+    FOREIGN KEY (end_translation_id, end_book_id, end_chapter, end_number) REFERENCES verses (translation_id, book_id, chapter, number)
 );
 
 INSERT INTO books (id, book_order, title) VALUES

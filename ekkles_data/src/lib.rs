@@ -9,6 +9,7 @@ use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
 
 pub mod bible;
+pub mod playlist;
 pub mod song_db;
 pub mod song_xml;
 
@@ -56,16 +57,6 @@ impl Song {
 
         Ok(())
     }
-}
-
-enum PlaylistItem {
-    BiblePassage,
-    Song(Song),
-}
-
-struct Playlist {
-    id: i64,
-    items: Vec<PlaylistItem>,
 }
 
 #[cfg(test)]

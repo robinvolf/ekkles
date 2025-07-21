@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use log::trace;
 use sqlx::{SqlitePool, query};
 use std::{fmt::Display, ops::RangeInclusive};
@@ -10,6 +10,7 @@ use std::{fmt::Display, ops::RangeInclusive};
 /// To, kde se pasáž nachází je určeno dvěma odkazy - počátkem (`from`) a koncem (`to`).
 /// Fungují jako [`RangeInclusive`], tedy, pokud `from == to`, znamená to,
 /// že pasáž obsahuje jeden verš.
+#[derive(Debug)]
 pub struct Passage {
     /// Id překladu v databázi
     translation_id: i64,
@@ -1491,6 +1492,82 @@ pub enum Book {
     John3 = 63,
     Jude = 64,
     Revelation = 65,
+}
+
+impl TryFrom<u8> for Book {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Book::Genesis),
+            1 => Ok(Book::Exodus),
+            2 => Ok(Book::Leviticus),
+            3 => Ok(Book::Numbers),
+            4 => Ok(Book::Deuteronomy),
+            5 => Ok(Book::Joshua),
+            6 => Ok(Book::Judges),
+            7 => Ok(Book::Ruth),
+            8 => Ok(Book::Samuel1),
+            9 => Ok(Book::Samuel2),
+            10 => Ok(Book::Kings1),
+            11 => Ok(Book::Kings2),
+            12 => Ok(Book::Chronicles1),
+            13 => Ok(Book::Chronicles2),
+            14 => Ok(Book::Ezra),
+            15 => Ok(Book::Nehemiah),
+            16 => Ok(Book::Esther),
+            17 => Ok(Book::Job),
+            18 => Ok(Book::Psalms),
+            19 => Ok(Book::Proverbs),
+            20 => Ok(Book::Ecclesiastes),
+            21 => Ok(Book::SongOfSolomon),
+            22 => Ok(Book::Isaiah),
+            23 => Ok(Book::Jeremiah),
+            24 => Ok(Book::Lamentations),
+            25 => Ok(Book::Ezekiel),
+            26 => Ok(Book::Daniel),
+            27 => Ok(Book::Hosea),
+            28 => Ok(Book::Joel),
+            29 => Ok(Book::Amos),
+            30 => Ok(Book::Obadiah),
+            31 => Ok(Book::Jonah),
+            32 => Ok(Book::Micah),
+            33 => Ok(Book::Nahum),
+            34 => Ok(Book::Habakkuk),
+            35 => Ok(Book::Zephaniah),
+            36 => Ok(Book::Haggai),
+            37 => Ok(Book::Zechariah),
+            38 => Ok(Book::Malachi),
+            39 => Ok(Book::Matthew),
+            40 => Ok(Book::Mark),
+            41 => Ok(Book::Luke),
+            42 => Ok(Book::John),
+            43 => Ok(Book::Acts),
+            44 => Ok(Book::Romans),
+            45 => Ok(Book::Corinthians1),
+            46 => Ok(Book::Corinthians2),
+            47 => Ok(Book::Galatians),
+            48 => Ok(Book::Ephesians),
+            49 => Ok(Book::Philippians),
+            50 => Ok(Book::Colossians),
+            51 => Ok(Book::Thessalonians1),
+            52 => Ok(Book::Thessalonians2),
+            53 => Ok(Book::Timothy1),
+            54 => Ok(Book::Timothy2),
+            55 => Ok(Book::Titus),
+            56 => Ok(Book::Philemon),
+            57 => Ok(Book::Hebrews),
+            58 => Ok(Book::James),
+            59 => Ok(Book::Peter1),
+            60 => Ok(Book::Peter2),
+            61 => Ok(Book::John1),
+            62 => Ok(Book::John2),
+            63 => Ok(Book::John3),
+            64 => Ok(Book::Jude),
+            65 => Ok(Book::Revelation),
+            _ => Err(anyhow!("Kniha s indexem vyšším než 65 neexistuje")),
+        }
+    }
 }
 
 impl Display for Book {
