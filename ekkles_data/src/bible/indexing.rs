@@ -123,6 +123,8 @@ pub struct VerseIndex {
 }
 
 impl VerseIndex {
+    /// Pokusi se zkonstruovat nový index verše. Pokud taková kombinace knihy,
+    /// kapitoly a verše neexistuje, vrátí None.
     pub fn try_new(book: Book, chapter: u8, verse: u8) -> Option<Self> {
         if verses_in_chapter(book, chapter).is_none_or(|range| !range.contains(&verse)) {
             None
@@ -133,6 +135,12 @@ impl VerseIndex {
                 verse_number: verse,
             })
         }
+    }
+
+    /// Vrátí trojici `(kniha, kapitola, číslo_verše)` v čistě numerické podobě odpovídající
+    /// reprezentaci v databázi
+    pub fn destructure_numeric(&self) -> (u8, u8, u8) {
+        (self.book as u8, self.chapter, self.verse_number)
     }
 }
 
