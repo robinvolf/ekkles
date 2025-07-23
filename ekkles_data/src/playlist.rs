@@ -34,12 +34,20 @@
 
 use crate::{
     Song,
-    bible::indexing::{Passage, VerseIndex},
+    bible::indexing::{Book, Passage, VerseIndex},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::TryStreamExt;
-use sqlx::{SqlitePool, query};
+use sqlx::{Acquire, SqlitePool, query};
+
+/// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro píseň
+const DB_PLAYLIST_KIND_SONG: &str = "song";
+/// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro pasáž z Bible
+const DB_PLAYLIST_KIND_BIBLE_PASSAGE: &str = "bible";
+/// Formátovací řetězec pro [`NaiveDateTime::parse_from_str`] a jí podobné funkce při
+/// parsování řetězců z/do databáze.
+const DB_DATETIME_FORMAT: &str = "%F %T";
 
 /// Status playlistu ohledně databáze, viz [dokumentace modulu](`crate::playlist`)
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -88,6 +96,103 @@ impl PlaylistMetadata {
         }
     }
 
+    /// Načte existující playlist s daným ID z databáze, status bude mít nastaven na
+    /// [`PlaylistMetadataStatus::Clean`]. Pokud takový playlist neexistuje
+    /// nebo se něco v pokazí při načítání, vrátí Error.
+    async fn load(id: i64, pool: &SqlitePool) -> Result<Self> {
+        let metadata = query!("SELECT name, created FROM playlists WHERE id = $1", id)
+            .fetch_one(pool)
+            .await
+            .with_context(|| format!("Nelze načíst playlist s id {id} z databáze"))?;
+
+        let name = metadata.name;
+        let created = NaiveDateTime::parse_from_str(&metadata.created, DB_DATETIME_FORMAT)
+            .with_context(|| format!("Nelze zparsovat datum z databáze {}", metadata.created))?
+            .and_utc();
+
+        let mut parts = query!(
+            "SELECT part_order, kind FROM playlist_parts WHERE playlist_id = $1 ORDER BY part_order ASC",
+            id
+        )
+        .fetch(pool);
+
+        let mut items = Vec::new();
+
+        while let Some(record) = parts
+            .try_next()
+            .await
+            .context("Nelze načíst část playlistu z databáze")?
+        {
+            match record.kind.as_str() {
+                DB_PLAYLIST_KIND_SONG => {
+                    let song_id = query!(
+                    "SELECT song_id FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
+                    id,
+                    record.part_order
+                    )
+                    .fetch_one(pool)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Nelze načíst část {} playlistu s id {} z databáze",
+                            record.part_order, id
+                        )
+                    })?.song_id;
+
+                    items.push(PlaylistItemMetadata::Song(song_id));
+                }
+                DB_PLAYLIST_KIND_BIBLE_PASSAGE => {
+                    let record = query!(
+                        "SELECT translation_id, start_book_id, start_chapter, start_number, end_book_id, end_chapter, end_number FROM playlist_passages WHERE playlist_id = $1 AND part_order = $2",
+                        id,
+                        record.part_order
+                    )
+                    .fetch_one(pool)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Nelze načíst část {} playlistu s id {} z databáze",
+                            record.part_order, id
+                        )
+                    })?;
+
+                    let from = VerseIndex::try_new(
+                        Book::try_from(record.start_book_id as u8)?,
+                        record.start_chapter as u8,
+                        record.start_number as u8,
+                    )
+                    .ok_or(anyhow!("Nevalidní index verše v databázi"))?;
+
+                    let to = VerseIndex::try_new(
+                        Book::try_from(record.end_book_id as u8)?,
+                        record.end_chapter as u8,
+                        record.end_number as u8,
+                    )
+                    .ok_or(anyhow!("Nevalidní index verše v databázi"))?;
+
+                    let new_item = PlaylistItemMetadata::BiblePassage {
+                        translation_id: record.translation_id,
+                        from,
+                        to,
+                    };
+
+                    items.push(new_item);
+                }
+                _ => panic!(
+                    "Sloupec playlist_parts.kind by měl být integritně omezen na '{}' nebo '{}', došlo ke korupci dat v databázi?",
+                    DB_PLAYLIST_KIND_SONG, DB_PLAYLIST_KIND_BIBLE_PASSAGE
+                ),
+            }
+        }
+
+        Ok(Self {
+            status: PlaylistMetadataStatus::Clean(id),
+            name,
+            created,
+            items,
+        })
+    }
+
     /// Získá status playlistu, viz: [`PlaylistMetadataStatus`]
     pub fn get_status(&self) -> PlaylistMetadataStatus {
         self.status
@@ -112,15 +217,70 @@ impl PlaylistMetadata {
                 Ok(())
             }
             PlaylistMetadataStatus::Clean(_) => Ok(()),
-            PlaylistMetadataStatus::Dirty(_) => todo!(),
+            PlaylistMetadataStatus::Dirty(_) => self.save_dirty(pool).await,
         }
+    }
+
+    /// Uloží "špinavý" playlist do databáze a označí jej jako čistý, pokud se nepovede, vrací Error.
+    ///
+    /// ### Bezpečnost
+    /// Tato metoda musí být volána *pouze* na playlistech, které mají status [`PlaylistMetadataStatus::Dirty`], jinak metoda zpanikaří.
+    /// Toto je low-level metoda, pro uložení playlistu bys měl použít raději [`PlaylistMetadata::save()`].
+    ///
+    /// ### Integrita databáze
+    /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
+    /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
+    ///
+    /// ### Implementace
+    /// Nejdřív se načte "čistá" verze z databáze a provede se diff oproti této "špinavé verzi".
+    /// Poté se do databáze propíšou pouze změny z diffu.
+    async fn save_dirty(&mut self, pool: &SqlitePool) -> Result<()> {
+        let id = if let PlaylistMetadataStatus::Dirty(id) = self.status {
+            id
+        } else {
+            panic!(
+                "Metoda `save_dirty()` byla zavolána na ne-dirty playlistu, toto by se nikdy nemělo stát"
+            )
+        };
+
+        let db_copy = PlaylistMetadata::load(id, pool)
+            .await
+            .expect("\"Špinavý\" playlist neexistuje v databázi, to by se nikdy nemělo stát");
+
+        let differences = self.diff(&db_copy);
+        let mut transaction = pool
+            .begin()
+            .await
+            .context("Nelze získat transakci na poolu databáze")?;
+
+        for diff in differences {
+            match diff {
+                PlaylistMetadataDiff::Name(new_name) => {
+                    query!("UPDATE playlists SET name = $1 WHERE id = $2", new_name, id)
+                        .execute(&mut *transaction)
+                        .await
+                        .context("Nelze updatovat jméno playlistu")?;
+                }
+                PlaylistMetadataDiff::Added(playlist_item_metadata) => todo!(),
+                PlaylistMetadataDiff::Removed(playlist_item_metadata) => todo!(),
+            }
+        }
+
+        transaction
+            .commit()
+            .await
+            .with_context(|| format!("Commit transakce uložení playlistu {} selhal", self.name))
     }
 
     /// Uloží čerstvý playlist do databáze, playlist byl pouze v paměti. V případě úspěchu vrátí  ID pod kterým byl playlist uložen, v opačném případě vrací Error.
     ///
-    /// ### Integrita
+    /// ### Bezpečnost
     /// Tato metoda musí být volána *pouze* na playlistech, které mají status [`PlaylistMetadataStatus::Clean`], jinak metoda zpanikaří.
     /// Toto je low-level metoda, pro uložení playlistu bys měl použít raději [`PlaylistMetadata::save()`].
+    ///
+    /// ### Integrita databáze
+    /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
+    /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
     async fn save_transient(&self, pool: &SqlitePool) -> Result<i64> {
         assert_eq!(
             self.status,
@@ -128,19 +288,19 @@ impl PlaylistMetadata {
             "Metoda `save_transient()` byla zavolána na ne-transient playlistu, toto by se nikdy nemělo stát"
         );
 
-        let mut transation = pool
+        let mut transaction = pool
             .begin()
             .await
             .context("Nelze získat transakci na poolu databáze")?;
 
-        let formatted_datetime = self.created.format("%F %T").to_string();
+        let formatted_datetime = self.created.format(DB_DATETIME_FORMAT).to_string();
 
         let playlist_id = query!(
             "INSERT INTO playlists (name, created) VALUES ($1, datetime($2))",
             self.name,
             formatted_datetime
         )
-        .execute(&mut *transation)
+        .execute(&mut *transaction)
         .await
         .with_context(|| format!("Nelze uložit playlist '{}' do databáze", self.name))?
         .last_insert_rowid();
@@ -164,7 +324,7 @@ impl PlaylistMetadata {
                 order,
                 item_kind
             )
-            .execute(&mut *transation)
+            .execute(&mut *transaction)
             .await
             .with_context(|| format!("Nelze uložit část playlistu '{}' do databáze", self.name))?;
 
@@ -177,19 +337,18 @@ impl PlaylistMetadata {
                     let (from_book, from_chapter, from_verse_number) = from.destructure_numeric();
                     let (to_book, to_chapter, to_verse_number) = to.destructure_numeric();
                     query!(
-                        "INSERT INTO playlist_passages ( playlist_id, part_order, start_translation_id , start_book_id , start_chapter , start_number , end_translation_id , end_book_id , end_chapter , end_number) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                        "INSERT INTO playlist_passages ( playlist_id, part_order, translation_id , start_book_id , start_chapter , start_number , end_book_id , end_chapter , end_number) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                         playlist_id,
                         order,
                         translation_id,
                         from_book,
                         from_chapter,
                         from_verse_number,
-                        translation_id,
                         to_book,
                         to_chapter,
                         to_verse_number
                     )
-                    .execute(&mut *transation)
+                    .execute(&mut *transaction)
                     .await
                     .with_context(|| format!("Nelze uložit pasáž playlistu '{}' do databáze", self.name))?; // TODO: Tu pasáž lze i pojmenovat, až budeme mít Display pro Passage/VerseIndex
                 }
@@ -200,14 +359,14 @@ impl PlaylistMetadata {
                         order,
                         song_id
                     )
-                    .execute(&mut *transation)
+                    .execute(&mut *transaction)
                     .await
                     .with_context(|| format!("Nelze uložit píseň s ID {} playlistu '{}' do databáze", song_id, self.name))?;
                 }
             }
         }
 
-        transation
+        transaction
             .commit()
             .await
             .with_context(|| format!("Commit transakce uložení playlistu {} selhal", self.name))?;
@@ -268,11 +427,6 @@ pub struct Playlist {
     items: Vec<PlaylistItem>,
 }
 
-/// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro píseň
-const DB_PLAYLIST_KIND_SONG: &str = "song";
-/// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro pasáž z Bible
-const DB_PLAYLIST_KIND_BIBLE_PASSAGE: &str = "bible";
-
 impl Playlist {
     /// Načte playlist s daným ID z databáze.
     pub async fn load(id: i64, pool: &SqlitePool) -> Result<Self> {
@@ -282,7 +436,7 @@ impl Playlist {
             .with_context(|| format!("Playlist s id {id} nebyl nalezen"))?;
 
         let name = playlist_record.name;
-        let created = NaiveDateTime::parse_from_str(&playlist_record.created, "%Y-%m-%d %H:%M:%S")
+        let created = NaiveDateTime::parse_from_str(&playlist_record.created, DB_DATETIME_FORMAT)
             .with_context(|| {
                 format!(
                     "Nelze zparsovat datum z databáze {}",
@@ -320,14 +474,10 @@ impl Playlist {
                 }
                 DB_PLAYLIST_KIND_SONG => {
                     let passage_record = query!(
-                        "SELECT start_translation_id , start_book_id , start_chapter , start_number , end_translation_id , end_book_id , end_chapter , end_number FROM playlist_passages WHERE playlist_id = $1 AND part_order = $2",
+                        "SELECT translation_id , start_book_id , start_chapter , start_number , end_book_id , end_chapter , end_number FROM playlist_passages WHERE playlist_id = $1 AND part_order = $2",
                         id,
                         part_record.part_order
                     ).fetch_one(pool).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?;
-
-                    if passage_record.start_translation_id != passage_record.end_translation_id {
-                        bail!("Nelze načíst pasáž se začátkem a koncem v jiných překladech");
-                    }
 
                     let start = VerseIndex::try_new(
                         (passage_record.start_book_id as u8).try_into().unwrap(),
@@ -357,15 +507,14 @@ impl Playlist {
                         )
                     })?;
 
-                    let passage =
-                        Passage::load(start, end, passage_record.start_translation_id, pool)
-                            .await
-                            .with_context(|| {
-                                format!(
-                                    "Nelze načíst pasáž od {:?} do {:?} v překladu {}",
-                                    start, end, passage_record.start_translation_id
-                                )
-                            })?;
+                    let passage = Passage::load(start, end, passage_record.translation_id, pool)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Nelze načíst pasáž od {:?} do {:?} v překladu {}",
+                                start, end, passage_record.translation_id
+                            )
+                        })?;
 
                     items.push(PlaylistItem::BiblePassage(passage));
                 }

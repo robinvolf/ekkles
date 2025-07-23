@@ -76,17 +76,16 @@ CREATE TABLE IF NOT EXISTS playlist_songs (
 CREATE TABLE IF NOT EXISTS playlist_passages (
     playlist_id INTEGER NOT NULL,
     part_order INTEGER NOT NULL,
-    start_translation_id INTEGER NOT NULL,
+    translation_id INTEGER NOT NULL,
     start_book_id INTEGER NOT NULL,
     start_chapter INTEGER NOT NULL,
     start_number INTEGER NOT NULL,
-    end_translation_id INTEGER NOT NULL,
     end_book_id INTEGER NOT NULL,
     end_chapter INTEGER NOT NULL,
     end_number INTEGER NOT NULL,
     PRIMARY KEY (playlist_id, part_order),
-    FOREIGN KEY (start_translation_id, start_book_id, start_chapter, start_number) REFERENCES verses (translation_id, book_id, chapter, number),
-    FOREIGN KEY (end_translation_id, end_book_id, end_chapter, end_number) REFERENCES verses (translation_id, book_id, chapter, number)
+    FOREIGN KEY (translation_id, start_book_id, start_chapter, start_number) REFERENCES verses (translation_id, book_id, chapter, number),
+    FOREIGN KEY (translation_id, end_book_id, end_chapter, end_number) REFERENCES verses (translation_id, book_id, chapter, number)
 );
 
 INSERT INTO books (id, book_order, title) VALUES
