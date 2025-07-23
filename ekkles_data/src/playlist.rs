@@ -10,7 +10,7 @@
 //! ### Status Metadatového playlistu
 //! Metadatový playlist má pole `status`, které označuje, zda-li jsou data uložena v DB.
 //! Pracuje následovně:
-//! ```
+//! ```text
 //!            new()
 //!             ->   Transient
 //!                      |
@@ -27,7 +27,7 @@
 //!
 //! Při interakci s uživatelem je pak dobré jej převést na lokální Timezone pomocí:
 //!
-//! ```rust
+//! ```rust,ignore
 //! let utc = Utc::now();
 //! let local: DateTime<Local> = DateTime::from(utc);
 //! ```
@@ -53,7 +53,7 @@ pub enum PlaylistMetadataStatus {
 }
 
 /// Playlist se skládá z vícero druhů položek, tento enum je rozlišuje.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum PlaylistItemMetadata {
     BiblePassage {
         translation_id: i64,
@@ -214,6 +214,40 @@ impl PlaylistMetadata {
 
         Ok(playlist_id)
     }
+
+    /// Vrátí seznam odlišností mezi tímto playlistem a `other`.
+    fn diff(&self, other: &PlaylistMetadata) -> Vec<PlaylistMetadataDiff> {
+        let mut differences = Vec::new();
+
+        if self.name != other.name {
+            differences.push(PlaylistMetadataDiff::Name(other.name.clone()));
+        }
+
+        for item in self.items.iter() {
+            if !other.items.contains(&item) {
+                differences.push(PlaylistMetadataDiff::Removed(*item));
+            }
+        }
+
+        for item in other.items.iter() {
+            if !self.items.contains(&item) {
+                differences.push(PlaylistMetadataDiff::Added(*item));
+            }
+        }
+
+        differences
+    }
+}
+
+/// Co všechno může být rozdíl mezi dvěma [`PlaylistMetadata`].
+#[derive(Debug, PartialEq, Eq)]
+enum PlaylistMetadataDiff {
+    /// Jiný název
+    Name(String),
+    /// Přidaná položka
+    Added(PlaylistItemMetadata),
+    /// Odstraněná položka
+    Removed(PlaylistItemMetadata),
 }
 
 #[derive(Debug)]
@@ -345,5 +379,110 @@ impl Playlist {
             created,
             items,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bible::indexing::Book;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn test_diff_name() {
+        let a = PlaylistMetadata {
+            status: PlaylistMetadataStatus::Transient,
+            name: String::from("a"),
+            created: Utc::now(),
+            items: vec![],
+        };
+
+        let b = PlaylistMetadata {
+            status: PlaylistMetadataStatus::Transient,
+            name: String::from("b"),
+            created: Utc::now(),
+            items: vec![],
+        };
+
+        let diff = a.diff(&b);
+
+        assert_eq!(diff, vec![PlaylistMetadataDiff::Name(String::from("b"))]);
+    }
+
+    #[test]
+    fn test_diff_added() {
+        let a = PlaylistMetadata {
+            status: PlaylistMetadataStatus::Transient,
+            name: String::from("a"),
+            created: Utc::now(),
+            items: vec![],
+        };
+
+        let b = PlaylistMetadata {
+            status: PlaylistMetadataStatus::Transient,
+            name: String::from("a"),
+            created: Utc::now(),
+            items: vec![
+                PlaylistItemMetadata::Song(1),
+                PlaylistItemMetadata::BiblePassage {
+                    translation_id: 1,
+                    from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+                    to: VerseIndex::try_new(Book::Genesis, 1, 5).unwrap(),
+                },
+            ],
+        };
+
+        let diff = a.diff(&b);
+
+        assert_eq!(
+            diff,
+            vec![
+                PlaylistMetadataDiff::Added(PlaylistItemMetadata::Song(1)),
+                PlaylistMetadataDiff::Added(PlaylistItemMetadata::BiblePassage {
+                    translation_id: 1,
+                    from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+                    to: VerseIndex::try_new(Book::Genesis, 1, 5).unwrap(),
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff_removed() {
+        let a = PlaylistMetadata {
+            status: PlaylistMetadataStatus::Transient,
+            name: String::from("a"),
+            created: Utc::now(),
+            items: vec![
+                PlaylistItemMetadata::Song(1),
+                PlaylistItemMetadata::BiblePassage {
+                    translation_id: 1,
+                    from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+                    to: VerseIndex::try_new(Book::Genesis, 1, 5).unwrap(),
+                },
+            ],
+        };
+
+        let b = PlaylistMetadata {
+            status: PlaylistMetadataStatus::Transient,
+            name: String::from("a"),
+            created: Utc::now(),
+            items: vec![],
+        };
+
+        let diff = a.diff(&b);
+
+        assert_eq!(
+            diff,
+            vec![
+                PlaylistMetadataDiff::Removed(PlaylistItemMetadata::Song(1)),
+                PlaylistMetadataDiff::Removed(PlaylistItemMetadata::BiblePassage {
+                    translation_id: 1,
+                    from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+                    to: VerseIndex::try_new(Book::Genesis, 1, 5).unwrap(),
+                })
+            ]
+        );
     }
 }
