@@ -154,4 +154,4 @@ INSERT INTO books (id, book_order, title) VALUES
     (62, 62, '2. Janova'),
     (63, 63, '3. Janova'),
     (64, 64, 'Juda'),
-    (65, 65, 'Zjevení')
+    (65, 65, 'Zjevení');

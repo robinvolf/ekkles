@@ -770,34 +770,221 @@ impl Playlist {
 
 #[cfg(test)]
 mod tests {
+
+    use pretty_assertions::assert_eq;
     use sqlx::query_file;
 
     use super::*;
 
-    // Funkce na vytvoření in-memory databáze pro testování. Vytvoří holou databázi
-    // pouze se strukturou tabulek, ale bez dat.
+    /// Funkce na vytvoření in-memory databáze pro testování. Vytvoří holou databázi
+    /// a nasype do ní dvě písně a prvních 10 veršů genesis pro testování. Též vytvoří
+    /// prázdný playlist s ID 0. Pro detaily viz soubory ve `query_file!()`
     async fn setup_test_db() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
 
-        query_file!("../db/init_db.sql")
+        query_file!("db/init_db.sql").execute(&pool).await.unwrap();
+
+        query_file!("db/fill_test_db.sql")
             .execute(&pool)
             .await
             .unwrap();
 
-        // Testovací playlist, ke kterému se budeme odkazovat, bude mít ID 1 a název "test"
-        query!("INSERT INTO playlists (id, name) VALUES (1, 'test')")
+        // Vložíme testovací playlist na kterém se budou operace na itemech zkoušet
+        query!("INSERT INTO playlists (id, 'name') VALUES (0, 'test')")
             .execute(&pool)
             .await
             .unwrap();
-
-        // TODO: Tady by se hodilo vložit nějaké písně a možná i verše do testovací databáze, ať máme na co se dotazovat. Bylo by dobré to znovupoužít pro knihovní testy vnějšího API.
-        // Možná to všechno narvat do souboru a pak `query_file!()`?
 
         pool
     }
 
     #[tokio::test]
-    async fn test_insert() {
-        todo!()
+    async fn metadata_item_insert_song_test() {
+        let pool = setup_test_db().await;
+
+        let song = PlaylistItemMetadata::Song(0);
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let song_order = 0;
+        let res = song.insert(&mut tx1, playlist_id, song_order).await;
+        assert!(res.is_ok());
+
+        tx1.commit().await.unwrap();
+
+        let (order, kind) = query!("SELECT * FROM playlist_parts WHERE playlist_id = 0")
+            .map(|record| (record.part_order, record.kind))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(order as u32, song_order);
+        assert_eq!(kind, DB_PLAYLIST_KIND_SONG);
+
+        let song_id_from_db = query!(
+            "SELECT * FROM playlist_songs WHERE playlist_id = 0 AND part_order = $1",
+            song_order
+        )
+        .map(|record| record.song_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(song_id_from_db, 0);
     }
+
+    #[tokio::test]
+    async fn metadata_item_insert_passage_test() {
+        let pool = setup_test_db().await;
+
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let passage_order = 0;
+        let res = bible_passage
+            .insert(&mut tx1, playlist_id, passage_order)
+            .await;
+        assert!(res.is_ok());
+
+        tx1.commit().await.unwrap();
+
+        let (order, kind) = query!("SELECT * FROM playlist_parts WHERE playlist_id = 0")
+            .map(|record| (record.part_order, record.kind))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(order as u32, passage_order);
+        assert_eq!(kind, DB_PLAYLIST_KIND_BIBLE_PASSAGE);
+
+        let passage_from_db = query!(
+            "SELECT * FROM playlist_passages WHERE playlist_id = 0 AND part_order = $1",
+            passage_order
+        )
+        .map(|record| PlaylistItemMetadata::BiblePassage {
+            translation_id: record.translation_id,
+            from: VerseIndex::try_new(
+                Book::try_from(record.start_book_id as u8).unwrap(),
+                record.start_chapter as u8,
+                record.start_number as u8,
+            )
+            .unwrap(),
+            to: VerseIndex::try_new(
+                Book::try_from(record.end_book_id as u8).unwrap(),
+                record.end_chapter as u8,
+                record.end_number as u8,
+            )
+            .unwrap(),
+        })
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(passage_from_db, bible_passage);
+    }
+
+    #[tokio::test]
+    async fn metadata_item_insert_same_order_test() {
+        let pool = setup_test_db().await;
+
+        let song = PlaylistItemMetadata::Song(0);
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let same_order = 0;
+
+        let res = bible_passage
+            .insert(&mut tx1, playlist_id, same_order)
+            .await;
+        assert!(res.is_ok());
+
+        let res = song.insert(&mut tx1, playlist_id, same_order).await;
+
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn metadata_item_load_one_test() {
+        let pool = setup_test_db().await;
+
+        let song = PlaylistItemMetadata::Song(0);
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let passage_order = 0;
+        let song_order = 1;
+
+        let res = bible_passage
+            .insert(&mut tx1, playlist_id, passage_order)
+            .await;
+        assert!(res.is_ok());
+        let res = song.insert(&mut tx1, playlist_id, song_order).await;
+        assert!(res.is_ok());
+
+        tx1.commit().await.unwrap();
+
+        let passage_from_db = PlaylistItemMetadata::load_one(&pool, playlist_id, passage_order)
+            .await
+            .ok();
+        let song_from_db = PlaylistItemMetadata::load_one(&pool, playlist_id, song_order)
+            .await
+            .ok();
+
+        assert_eq!(passage_from_db, Some(bible_passage));
+        assert_eq!(song_from_db, Some(song));
+    }
+
+    #[tokio::test]
+    async fn metadata_item_load_many_test() {
+        let pool = setup_test_db().await;
+
+        let song = PlaylistItemMetadata::Song(0);
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let passage_order = 0;
+        let song_order = 1;
+
+        let res = bible_passage
+            .insert(&mut tx1, playlist_id, passage_order)
+            .await;
+        assert!(res.is_ok());
+        let res = song.insert(&mut tx1, playlist_id, song_order).await;
+        assert!(res.is_ok());
+
+        tx1.commit().await.unwrap();
+
+        let items = PlaylistItemMetadata::load_many(&pool, playlist_id).await;
+
+        assert!(items.is_ok());
+
+        assert_eq!(items.unwrap(), vec![bible_passage, song]);
+    }
+
+    // Ještě delete pro item
 }
