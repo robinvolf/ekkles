@@ -32,6 +32,8 @@
 //! let local: DateTime<Local> = DateTime::from(utc);
 //! ```
 
+use std::ops::Index;
+
 use crate::{
     Song,
     bible::indexing::{Book, Passage, VerseIndex},
@@ -470,12 +472,74 @@ impl PlaylistMetadata {
         self.status
     }
 
-    /// Přidá píseň s ID `song_id` do playlistu. Pokud byl status `clean`, shodí jej na `dirty`.
-    pub fn add_song(&mut self, song_id: i64) {
-        self.items.push(PlaylistItemMetadata::Song(song_id));
+    /// Přidá píseň s ID `song_id` do playlistu na pozici `position`. Pokud byl status `clean`, shodí jej na `dirty`.
+    pub fn add_song(&mut self, song_id: i64, position: usize) {
+        self.items
+            .insert(position, PlaylistItemMetadata::Song(song_id));
 
         if let PlaylistMetadataStatus::Clean(id) = self.status {
             self.status = PlaylistMetadataStatus::Dirty(id);
+        }
+    }
+
+    /// Přidá pasáž do playlistu na pozici `position`. Pasáž bude z překladu s ID `translation_id` a bude od `from` do `to`. Pokud byl status `clean`, shodí jej na `dirty`.
+    pub fn add_bible_passage(
+        &mut self,
+        translation_id: i64,
+        from: VerseIndex,
+        to: VerseIndex,
+        position: usize,
+    ) {
+        self.items.insert(
+            position,
+            PlaylistItemMetadata::BiblePassage {
+                translation_id,
+                from,
+                to,
+            },
+        );
+
+        if let PlaylistMetadataStatus::Clean(id) = self.status {
+            self.status = PlaylistMetadataStatus::Dirty(id);
+        }
+    }
+
+    /// Odstraní položku na indexu `position` z playlistu, pokud na tomto indexu neexistje
+    /// položka, vrací Error. Pokud byl status `clean`, shodí jej na `dirty`.
+    pub fn delete_item(&mut self, position: usize) -> Result<()> {
+        if self.items.len() <= position {
+            bail!("Položka na indexu {position} neexistuje");
+        } else {
+            self.items.remove(position);
+
+            if let PlaylistMetadataStatus::Clean(id) = self.status {
+                self.status = PlaylistMetadataStatus::Dirty(id);
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Prohodí položky na pozicích `a` a `b` v playlistu, pokud je jeden index mimo vektor, vrací error. Pokud byl status `clean`, shodí jej na `dirty`.
+    pub fn swap_items(&mut self, a: usize, b: usize) -> Result<()> {
+        if self.items.get(a).is_none() {
+            bail!(
+                "Index {a} je mimo rozsah položek (0 až {})",
+                self.items.len() - 1
+            );
+        } else if self.items.get(b).is_none() {
+            bail!(
+                "Index {b} je mimo rozsah položek (0 až {})",
+                self.items.len() - 1
+            );
+        } else {
+            self.items.swap(a, b);
+
+            if let PlaylistMetadataStatus::Clean(id) = self.status {
+                self.status = PlaylistMetadataStatus::Dirty(id);
+            }
+
+            Ok(())
         }
     }
 
