@@ -168,8 +168,11 @@ impl PlaylistItemMetadata {
         Ok(())
     }
 
-    /// Odstraní danou položku playlistu `playlist_id` s pořadovým číslem `order` z databáze za pomocí dané transakce, pokud nastane chyba
-    /// při mazání, vrací Error.
+    /// Odstraní danou položku playlistu `playlist_id` s pořadovým číslem `order`
+    /// z databáze za pomocí dané transakce, pokud nastane chyba při mazání, vrací Error.
+    ///
+    /// ### Existence v DB
+    /// Pokud daná položka neexistuje v databázi vrací Error.
     ///
     /// ### Transakce
     /// Volající je odpovědný za commit/rollback transakce, tato funkce pouze použije danou
@@ -180,36 +183,43 @@ impl PlaylistItemMetadata {
         playlist_id: i64,
         order: u32,
     ) -> Result<()> {
-        query!(
+        let rows_affected = query!(
             "DELETE FROM playlist_parts WHERE playlist_id = $1 AND part_order = $2",
             playlist_id,
             order,
         )
         .execute(&mut **transaction) // Docela prokleté, viz dokumentace Transaction v sqlx
         .await
-        .context("Nelze smazat část playlistu")?;
+        .context("Nelze smazat část playlistu")?
+        .rows_affected();
 
-        match self {
-            PlaylistItemMetadata::BiblePassage { .. } => {
-                query!(
-                    "DELETE FROM playlist_passages  WHERE playlist_id = $1 AND part_order = $2",
-                    playlist_id,
-                    order,
-                )
-                .execute(&mut **transaction)
-                .await
-                .context("Nelze smazat pasáž z playlistu")?;
-            }
-            PlaylistItemMetadata::Song(_) => {
-                query!(
-                    "DELETE FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
-                    playlist_id,
-                    order,
-                )
-                .execute(&mut **transaction)
-                .await
-                .context("Nelze smazat píseň z playlistu")?;
-            }
+        if rows_affected == 0 {
+            bail!("Část playlistu pro smazání neexistuje")
+        }
+
+        let rows_affected = match self {
+            PlaylistItemMetadata::BiblePassage { .. } => query!(
+                "DELETE FROM playlist_passages  WHERE playlist_id = $1 AND part_order = $2",
+                playlist_id,
+                order,
+            )
+            .execute(&mut **transaction)
+            .await
+            .context("Nelze smazat pasáž z playlistu")?
+            .rows_affected(),
+            PlaylistItemMetadata::Song(_) => query!(
+                "DELETE FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
+                playlist_id,
+                order,
+            )
+            .execute(&mut **transaction)
+            .await
+            .context("Nelze smazat píseň z playlistu")?
+            .rows_affected(),
+        };
+
+        if rows_affected == 0 {
+            bail!("Část playlistu pro smazání neexistuje")
         }
 
         Ok(())
@@ -986,5 +996,106 @@ mod tests {
         assert_eq!(items.unwrap(), vec![bible_passage, song]);
     }
 
-    // Ještě delete pro item
+    #[tokio::test]
+    async fn metadata_item_delete_test() {
+        let pool = setup_test_db().await;
+
+        let song = PlaylistItemMetadata::Song(0);
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let passage_order = 0;
+        let song_order = 1;
+
+        let res = bible_passage
+            .insert(&mut tx1, playlist_id, passage_order)
+            .await;
+        assert!(res.is_ok());
+        let res = song.insert(&mut tx1, playlist_id, song_order).await;
+        assert!(res.is_ok());
+
+        tx1.commit().await.unwrap();
+
+        let mut tx2 = pool.begin().await.unwrap();
+
+        let res = bible_passage
+            .delete(&mut tx2, playlist_id, passage_order)
+            .await;
+
+        assert!(res.is_ok());
+
+        tx2.commit().await.unwrap();
+
+        let res = PlaylistItemMetadata::load_one(&pool, playlist_id, passage_order).await;
+
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn metadata_item_delete_nonexistent_test() {
+        let pool = setup_test_db().await;
+
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let playlist_id = 0;
+        let passage_order = 0;
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let res = bible_passage
+            .delete(&mut tx1, playlist_id, passage_order)
+            .await;
+
+        dbg!(&res);
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn metadata_item_delete_all_test() {
+        let pool = setup_test_db().await;
+
+        let song = PlaylistItemMetadata::Song(0);
+        let bible_passage = PlaylistItemMetadata::BiblePassage {
+            translation_id: 0,
+            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
+        };
+
+        let mut tx1 = pool.begin().await.unwrap();
+
+        let playlist_id = 0;
+        let passage_order = 0;
+        let song_order = 1;
+
+        let res = bible_passage
+            .insert(&mut tx1, playlist_id, passage_order)
+            .await;
+        assert!(res.is_ok());
+        let res = song.insert(&mut tx1, playlist_id, song_order).await;
+        assert!(res.is_ok());
+
+        tx1.commit().await.unwrap();
+
+        let mut tx2 = pool.begin().await.unwrap();
+
+        let res = PlaylistItemMetadata::delete_all(&mut tx2, playlist_id).await;
+
+        assert!(res.is_ok());
+
+        tx2.commit().await.unwrap();
+
+        let res = PlaylistItemMetadata::load_many(&pool, playlist_id).await;
+
+        assert!(res.is_ok_and(|vec| vec.is_empty()))
+    }
 }
