@@ -39,7 +39,7 @@ use crate::{
     bible::indexing::{Book, Passage, VerseIndex},
 };
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, SubsecRound, Utc};
 use futures::TryStreamExt;
 use sqlx::{Sqlite, SqlitePool, Transaction, query};
 
@@ -422,10 +422,11 @@ impl PlaylistItemMetadata {
 /// Tato struktura reprezentuje playlist uložený v databázi a pomocí
 /// [`PlaylistMetadata::get_status()`] lze zjistit, zda-li se od playlistu
 /// v databázi liší (byl editován).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PlaylistMetadata {
     status: PlaylistMetadataStatus,
     name: String,
+    /// Čas vytvoření playlistu zaokrouhlený k nejbližší sekundě
     created: DateTime<Utc>,
     items: Vec<PlaylistItemMetadata>,
 }
@@ -436,7 +437,7 @@ impl PlaylistMetadata {
         Self {
             status: PlaylistMetadataStatus::Transient,
             name: name.to_string(),
-            created: Utc::now(),
+            created: Utc::now().round_subsecs(0),
             items: Vec::new(),
         }
     }
@@ -444,7 +445,7 @@ impl PlaylistMetadata {
     /// Načte existující playlist s daným ID z databáze, status bude mít nastaven na
     /// [`PlaylistMetadataStatus::Clean`]. Pokud takový playlist neexistuje
     /// nebo se něco v pokazí při načítání, vrátí Error.
-    async fn load(id: i64, pool: &SqlitePool) -> Result<Self> {
+    pub async fn load(id: i64, pool: &SqlitePool) -> Result<Self> {
         let metadata = query!("SELECT name, created FROM playlists WHERE id = $1", id)
             .fetch_one(pool)
             .await
@@ -472,6 +473,11 @@ impl PlaylistMetadata {
         self.status
     }
 
+    /// Convenience funkce pro vkládání písní na konec playlistu. Má stejné chování jako [`PlaylistMetadata::add_song`].
+    pub fn push_song(&mut self, song_id: i64) {
+        self.add_song(song_id, self.items.len());
+    }
+
     /// Přidá píseň s ID `song_id` do playlistu na pozici `position`. Pokud byl status `clean`, shodí jej na `dirty`.
     pub fn add_song(&mut self, song_id: i64, position: usize) {
         self.items
@@ -480,6 +486,11 @@ impl PlaylistMetadata {
         if let PlaylistMetadataStatus::Clean(id) = self.status {
             self.status = PlaylistMetadataStatus::Dirty(id);
         }
+    }
+
+    /// Convenience funkce pro vkládání pasáží na konec playlistu. Má stejné chování jako [`PlaylistMetadata::add_bible_passage`].
+    pub fn push_bible_passage(&mut self, translation_id: i64, from: VerseIndex, to: VerseIndex) {
+        self.add_bible_passage(translation_id, from, to, self.items.len());
     }
 
     /// Přidá pasáž do playlistu na pozici `position`. Pasáž bude z překladu s ID `translation_id` a bude od `from` do `to`. Pokud byl status `clean`, shodí jej na `dirty`.

@@ -134,4 +134,19 @@ impl Song {
 
         song.check_invariants().map(|_| song)
     }
+
+    /// Získá vektor dvojic (id, název) všech dostupných písní v databázi. Pokud se vyskytne
+    /// při čtení chyba, vrací `Error`.
+    pub async fn get_available_from_db(pool: &SqlitePool) -> Result<Vec<(i64, String)>> {
+        query!("SELECT id, title FROM songs")
+            .map(|record| {
+                (
+                    record.id.expect("Id je primární klíč, musí být přítomen"),
+                    record.title,
+                )
+            })
+            .fetch_all(pool)
+            .await
+            .context("Nelze načíst seznam písní z databáze")
+    }
 }
