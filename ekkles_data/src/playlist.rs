@@ -32,8 +32,6 @@
 //! let local: DateTime<Local> = DateTime::from(utc);
 //! ```
 
-use std::ops::Index;
-
 use crate::{
     Song,
     bible::indexing::{Book, Passage, VerseIndex},
@@ -41,7 +39,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDateTime, SubsecRound, Utc};
 use futures::TryStreamExt;
-use sqlx::{Sqlite, SqlitePool, Transaction, query};
+use sqlx::{Sqlite, SqlitePool, Transaction, pool::PoolConnection, query};
 
 /// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro píseň
 const DB_PLAYLIST_KIND_SONG: &str = "song";
@@ -71,6 +69,16 @@ enum PlaylistItemMetadata {
         to: VerseIndex,
     },
     Song(i64),
+}
+
+/// Vrátí seznam všech playlistů v databázi. Vrátí dvojice (ID, název) seřazené podle
+/// času vytvoření. Pokud se vyskytne chyba v databázi, vrátí Error
+pub async fn get_available(mut conn: PoolConnection<Sqlite>) -> Result<Vec<(i64, String)>> {
+    query!("SELECT id, name FROM playlists ORDER BY created ASC")
+        .map(|record| (record.id, record.name))
+        .fetch_all(&mut *conn)
+        .await
+        .context("Nelze načíst playlisty z databáze")
 }
 
 impl PlaylistItemMetadata {
