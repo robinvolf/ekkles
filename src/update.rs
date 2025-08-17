@@ -1,5 +1,6 @@
 use crate::pick_playlist::Message as PpMessage;
 use crate::{Screen, pick_playlist::PlaylistPickerItem};
+use anyhow::Context;
 use ekkles_data::playlist;
 use iced::Task;
 use log::{debug, warn};
@@ -11,17 +12,20 @@ impl Ekkles {
         debug!("Přišla zpráva: {:?}", msg);
 
         match (msg, &mut self.screen) {
-            (Message::WindowOpened(id), Screen::PickPlaylist(_picker)) => {
+            (Message::WindowOpened(id), Screen::PickPlaylist(_icker)) => {
                 if id == self.main_window_id {
                     debug!("Hlavní okno otevřeno, načítám playlisty z databáze");
                     // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
                     let conn = self.db.acquire();
                     Task::perform(
                         async move {
-                            let conn = conn.await.unwrap();
+                            let conn = conn.await.context("Nelze získat připojení k databázi")?;
                             playlist::get_available(conn).await
                         },
-                        |pls| Message::PlaylistPicker(PpMessage::PlaylistsLoaded(pls.unwrap())),
+                        |res| match res {
+                            Ok(pls) => Message::PlaylistPicker(PpMessage::PlaylistsLoaded(pls)),
+                            Err(e) => Message::ErrorOccured(format!("{:?}", e)),
+                        },
                     )
                 } else {
                     todo!("Jiná okna nejsou implementována")
@@ -57,6 +61,14 @@ impl Ekkles {
             (Message::PlaylistPicker(PpMessage::PickedPlaylist), Screen::PickPlaylist(_picker)) => {
                 debug!("Byl vybrán playlist k otevření");
                 todo!("Ještě neumím editovat playlisty")
+            }
+            (Message::ShouldQuit, _) => {
+                debug!("Ukončuji aplikaci");
+                iced::exit()
+            }
+            (Message::ErrorOccured(e), _) => {
+                self.screen = Screen::ErrorOccurred(e);
+                Task::none()
             }
             (msg, screen) => {
                 warn!(

@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use iced::{
     Element, Length,
     widget::{button, row},
@@ -9,13 +11,22 @@ pub enum TopButtonsMessage {
     Songs,
 }
 
-pub fn top_buttons() -> Element<'static, TopButtonsMessage> {
+pub enum TopButtonsPickedSection {
+    Songs,
+    Playlists,
+}
+
+pub fn top_buttons(picked: TopButtonsPickedSection) -> Element<'static, TopButtonsMessage> {
+    let (song_msg, playlist_msg) = match picked {
+        TopButtonsPickedSection::Songs => (None, Some(TopButtonsMessage::Playlists)),
+        TopButtonsPickedSection::Playlists => (Some(TopButtonsMessage::Songs), None),
+    };
     row![
         button("Písně")
-            .on_press(TopButtonsMessage::Songs)
+            .on_press_maybe(song_msg)
             .width(Length::FillPortion(1)),
         button("Playlisty")
-            .on_press(TopButtonsMessage::Playlists)
+            .on_press_maybe(playlist_msg)
             .width(Length::FillPortion(1))
     ]
     .width(Length::Fill)

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Result;
 use iced::Element;
 use iced::window::{self, Id, Settings};
 use iced::{Subscription, Task};
@@ -7,6 +8,7 @@ use sqlx::SqlitePool;
 
 mod components;
 mod config;
+mod error_screen;
 mod pick_playlist;
 mod update;
 
@@ -16,8 +18,13 @@ const PROGRAM_NAME: &str = "Ekkles";
 const DB_PATH: &str = "ekkles_data/db/database.sqlite3";
 
 #[derive(Debug)]
+/// Jednotlivé obrazovky aplikace
 enum Screen {
+    /// Vybírání playlistu k editaci
     PickPlaylist(pick_playlist::PlaylistPicker),
+    /// Nastala nezotavitelná chyba
+    ErrorOccurred(String),
+    /// Editování playlistu
     EditPlaylist,
 }
 
@@ -31,6 +38,7 @@ impl Screen {
     fn view(&self) -> Element<Message> {
         match self {
             Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
+            Screen::ErrorOccurred(err) => error_screen::view(err),
             Screen::EditPlaylist => todo!(),
         }
     }
@@ -38,19 +46,23 @@ impl Screen {
 
 #[derive(Debug, Clone)]
 enum Message {
+    /// Z aplikace bylo vyžádáno ukončení programu
+    ShouldQuit,
     /// Bylo otevřeno hlavní okno, spouští se na začátku
     WindowOpened(Id),
     /// Bylo zavřeno hlavní okno, měli bychom ukončit prezentování
     WindowClosed(Id),
     // Message z obrazovky "PlaylistPicker"
     PlaylistPicker(pick_playlist::Message),
+    /// Nastala chyba (ukládat pouhou String reprezentaci je ošklivé, ale [`anyhow::Error`]
+    /// neimplementuje [`Clone`] a [`Message`] musí být `Clone`)
+    ErrorOccured(String),
 }
 
 impl Ekkles {
     fn new() -> (Self, Task<Message>) {
         let (id, open_window_task) = window::open(Settings::default());
 
-        //
         let async_rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

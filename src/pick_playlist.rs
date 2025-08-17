@@ -68,7 +68,8 @@ impl PlaylistPicker {
         };
 
         column![
-            top_buttons().map(|msg| msg.into()),
+            top_buttons(crate::components::TopButtonsPickedSection::Playlists)
+                .map(|msg| msg.into()),
             container(column!("Vyber playlist", box_with_playlists))
                 .padding(20)
                 .height(Length::Fill)
