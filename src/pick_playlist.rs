@@ -1,10 +1,16 @@
 use std::fmt::Display;
 
-use crate::components::{TopButtonsMessage, top_buttons};
+use crate::{
+    Ekkles, Screen,
+    components::{TopButtonsMessage, top_buttons},
+    playlist_editor,
+};
+use ekkles_data::playlist::PlaylistMetadata;
 use iced::{
-    Element, Length,
+    Element, Length, Task,
     widget::{button, column, combo_box, container, horizontal_rule, row, text, text_input},
 };
+use log::debug;
 
 #[derive(Debug)]
 pub struct PlaylistPicker {
@@ -48,6 +54,48 @@ pub enum Message {
     PickedPlaylist,
     NewPlaylistNameChanged(String),
     CreateNewPlaylist,
+}
+
+/// Update funkce pro PickPlaylist. Pokud bude zavolána na jiné obrazovce, zpanikaří.
+pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
+    let picker = if let Screen::PickPlaylist(picker) = &mut state.screen {
+        picker
+    } else {
+        panic!("Update pro PickPlaylist zavolána na jinou obrazovku");
+    };
+
+    match msg {
+        Message::TopButtonSongs => {
+            todo!("Ještě neumím editovat písně")
+        }
+        Message::TopButtonPlaylists => {
+            debug!("Jsem v playlistu a klikám, abych se do něj znovu dostal, ignoruju");
+            Task::none()
+        }
+        Message::PlaylistsLoaded(playlists) => {
+            debug!("Načetly se playlisty");
+            let options = playlists
+                .into_iter()
+                .map(|(id, name)| PlaylistPickerItem { id, name })
+                .collect();
+            picker.playlists = Some(iced::widget::combo_box::State::new(options));
+            Task::none()
+        }
+        Message::PickedPlaylist => {
+            debug!("Byl vybrán playlist k otevření");
+            todo!("Ještě neumím editovat playlisty")
+        }
+        Message::NewPlaylistNameChanged(input) => {
+            picker.new_playlist_name = input;
+            Task::none()
+        }
+        Message::CreateNewPlaylist => {
+            let new_playlist = PlaylistMetadata::new(picker.new_playlist_name.trim());
+            debug!("Vytvářím nový playlist \"{}\"", new_playlist.get_name());
+            state.screen = Screen::EditPlaylist(playlist_editor::PlaylistEditor::new(new_playlist));
+            Task::none()
+        }
+    }
 }
 
 impl PlaylistPicker {
