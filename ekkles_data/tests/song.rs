@@ -58,7 +58,7 @@ async fn save_load_happy_path() {
         }
     };
 
-    match Song::load_from_db(id, &pool).await {
+    match Song::load_from_db(id, &mut pool.acquire().await.unwrap()).await {
         Ok(loaded_song) => assert_eq!(loaded_song, song),
         Err(e) => {
             println!("{:?}", e);

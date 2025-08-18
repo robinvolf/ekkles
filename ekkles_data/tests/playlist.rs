@@ -24,7 +24,7 @@ async fn save_empty() {
 
     assert_eq!(playlist.get_status(), PlaylistMetadataStatus::Transient);
 
-    playlist.save(&pool).await.unwrap();
+    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
 
     assert!(matches!(
         playlist.get_status(),
@@ -60,10 +60,12 @@ async fn save_modified() {
 
     assert_eq!(playlist.get_status(), PlaylistMetadataStatus::Transient);
 
-    playlist.save(&pool).await.unwrap();
+    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
 
     if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
-        let loaded_playlist = PlaylistMetadata::load(id, &pool).await.unwrap();
+        let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
+            .await
+            .unwrap();
         assert_eq!(loaded_playlist, playlist);
     } else {
         panic!();

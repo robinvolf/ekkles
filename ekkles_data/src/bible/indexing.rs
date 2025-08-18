@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use log::trace;
-use sqlx::{SqlitePool, query};
+use sqlx::{Sqlite, pool::PoolConnection, query};
 use std::{fmt::Display, ops::RangeInclusive};
 
 /// Struktura reprezentující pasáž v Bibli. Celá pasáž je v jednom překladu,
@@ -32,7 +32,7 @@ impl Passage {
         from: VerseIndex,
         to: VerseIndex,
         translation_id: i64,
-        pool: &SqlitePool,
+        conn: &mut PoolConnection<Sqlite>,
     ) -> Result<Self> {
         if from > to {
             bail!("Nevalidní rozsah pasáže, {:?} je až po {:?}", from, to);
@@ -42,7 +42,7 @@ impl Passage {
             "SELECT name FROM translations WHERE id = $1",
             translation_id
         )
-        .fetch_one(pool)
+        .fetch_one(conn.as_mut())
         .await
         .with_context(|| format!("Nepodařilo se načíst překlad s id {translation_id} z databáze"))?
         .name;
@@ -58,7 +58,7 @@ impl Passage {
             from.chapter,
             from.verse_number
         )
-        .fetch_one(pool)
+        .fetch_one(conn.as_mut())
         .await
         .with_context(|| format!("Nepodařilo se načíst pořadové číslo verše na začátku pasáže {:?}", from))?
         .verse_order;
@@ -70,7 +70,7 @@ impl Passage {
             to.chapter,
             to.verse_number
         )
-        .fetch_one(pool)
+        .fetch_one(conn.as_mut())
         .await
         .with_context(|| format!("Nepodařilo se načíst pořadové číslo verše na začátku pasáže {:?}", from))?
         .verse_order;
@@ -81,7 +81,7 @@ impl Passage {
             verse_order_end,
         )
         .map(|record| (record.number as u8, record.content))
-        .fetch_all(pool)
+        .fetch_all(conn.as_mut())
         .await
         .with_context(|| format!("Nepodařilo se načíst verše z databáze"))?;
 

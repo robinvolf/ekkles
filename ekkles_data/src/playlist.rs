@@ -38,8 +38,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDateTime, SubsecRound, Utc};
-use futures::TryStreamExt;
-use sqlx::{Sqlite, SqlitePool, Transaction, pool::PoolConnection, query};
+use sqlx::{Acquire, Sqlite, Transaction, pool::PoolConnection, query};
 
 /// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro píseň
 const DB_PLAYLIST_KIND_SONG: &str = "song";
@@ -79,6 +78,17 @@ pub async fn get_available(mut conn: PoolConnection<Sqlite>) -> Result<Vec<(i64,
         .fetch_all(&mut *conn)
         .await
         .context("Nelze načíst playlisty z databáze")
+}
+
+/// Pokud je název playlistu `name` k dispozici (zatím v databázi neexistuje
+/// takto pojmenovaný playlist), vrátí `true`, jinak `false`. Pokud nastane
+/// chyba s připojením k databázi, vrátí Error.
+pub async fn is_name_available(mut conn: PoolConnection<Sqlite>, name: &str) -> Result<bool> {
+    Ok(query!("SELECT id FROM playlists WHERE name == $1", name)
+        .fetch_optional(&mut *conn)
+        .await
+        .context("Nelze se připojit k databázi")?
+        .is_none())
 }
 
 impl PlaylistItemMetadata {
@@ -271,13 +281,17 @@ impl PlaylistItemMetadata {
 
     /// Načte jednu položku daného playlistu s daným pořadovým číslem, pokud se načítání z databáze
     /// nepovede, vrací Error.
-    async fn load_one(pool: &SqlitePool, playlist_id: i64, order: u32) -> Result<Self> {
+    async fn load_one(
+        mut conn: PoolConnection<Sqlite>,
+        playlist_id: i64,
+        order: u32,
+    ) -> Result<Self> {
         let kind = query!(
             "SELECT kind FROM playlist_parts WHERE playlist_id = $1 AND part_order = $2",
             playlist_id,
             order
         )
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
         .context("Nelze načíst druh položky playlistu")?
         .kind;
@@ -289,7 +303,7 @@ impl PlaylistItemMetadata {
                     playlist_id,
                     order
                 )
-                .fetch_one(pool)
+                .fetch_one(&mut *conn)
                 .await
                 .with_context(|| {
                     format!(
@@ -307,7 +321,7 @@ impl PlaylistItemMetadata {
                         playlist_id,
                         order
                     )
-                    .fetch_one(pool)
+                    .fetch_one(&mut *conn)
                     .await
                     .with_context(|| {
                         format!(
@@ -344,20 +358,18 @@ impl PlaylistItemMetadata {
     }
 
     /// Načte všechny položky playlistu a vrátí je jako vektor, pokud se načítání z databáze nepovede, vrací Error.
-    async fn load_many(pool: &SqlitePool, playlist_id: i64) -> Result<Vec<Self>> {
-        let mut parts = query!(
+    async fn load_many(mut conn: PoolConnection<Sqlite>, playlist_id: i64) -> Result<Vec<Self>> {
+        let parts = query!(
             "SELECT part_order, kind FROM playlist_parts WHERE playlist_id = $1 ORDER BY part_order ASC",
             playlist_id
         )
-        .fetch(pool);
+        .fetch_all(&mut *conn)
+        .await
+        .context("Nelze načíst část playlistu z databáze")?;
 
         let mut items = Vec::new();
 
-        while let Some(record) = parts
-            .try_next()
-            .await
-            .context("Nelze načíst část playlistu z databáze")?
-        {
+        for record in parts {
             match record.kind.as_str() {
                 DB_PLAYLIST_KIND_SONG => {
                     let song_id = query!(
@@ -365,7 +377,7 @@ impl PlaylistItemMetadata {
                     playlist_id,
                     record.part_order
                     )
-                    .fetch_one(pool)
+                    .fetch_one(&mut *conn)
                     .await
                     .with_context(|| {
                         format!(
@@ -382,7 +394,7 @@ impl PlaylistItemMetadata {
                         playlist_id,
                         record.part_order
                     )
-                    .fetch_one(pool)
+                    .fetch_one(&mut *conn)
                     .await
                     .with_context(|| {
                         format!(
@@ -430,7 +442,7 @@ impl PlaylistItemMetadata {
 /// Tato struktura reprezentuje playlist uložený v databázi a pomocí
 /// [`PlaylistMetadata::get_status()`] lze zjistit, zda-li se od playlistu
 /// v databázi liší (byl editován).
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PlaylistMetadata {
     status: PlaylistMetadataStatus,
     name: String,
@@ -453,9 +465,9 @@ impl PlaylistMetadata {
     /// Načte existující playlist s daným ID z databáze, status bude mít nastaven na
     /// [`PlaylistMetadataStatus::Clean`]. Pokud takový playlist neexistuje
     /// nebo se něco v pokazí při načítání, vrátí Error.
-    pub async fn load(id: i64, pool: &SqlitePool) -> Result<Self> {
+    pub async fn load(id: i64, mut conn: PoolConnection<Sqlite>) -> Result<Self> {
         let metadata = query!("SELECT name, created FROM playlists WHERE id = $1", id)
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await
             .with_context(|| format!("Nelze načíst playlist s id {id} z databáze"))?;
 
@@ -464,7 +476,7 @@ impl PlaylistMetadata {
             .with_context(|| format!("Nelze zparsovat datum z databáze {}", metadata.created))?
             .and_utc();
 
-        let items = PlaylistItemMetadata::load_many(pool, id)
+        let items = PlaylistItemMetadata::load_many(conn, id)
             .await
             .context("Nepodařilo se načíst položky playlistu")?;
 
@@ -568,15 +580,15 @@ impl PlaylistMetadata {
 
     /// Uloží daný playlist do databáze a nastaví jeho status na [`PlaylistMetadataStatus::Clean`].
     /// Pokud je již status playlistu [`PlaylistMetadataStatus::Clean`], je tato metoda no-op.
-    pub async fn save(&mut self, pool: &SqlitePool) -> Result<()> {
+    pub async fn save(&mut self, conn: PoolConnection<Sqlite>) -> Result<()> {
         match self.status {
             PlaylistMetadataStatus::Transient => {
-                let new_id = self.save_transient(pool).await?;
+                let new_id = self.save_transient(conn).await?;
                 self.status = PlaylistMetadataStatus::Clean(new_id);
                 Ok(())
             }
             PlaylistMetadataStatus::Clean(_) => Ok(()),
-            PlaylistMetadataStatus::Dirty(_) => self.save_dirty(pool).await,
+            PlaylistMetadataStatus::Dirty(_) => self.save_dirty(conn).await,
         }
     }
 
@@ -589,7 +601,7 @@ impl PlaylistMetadata {
     /// ### Integrita databáze
     /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
     /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
-    async fn save_dirty(&mut self, pool: &SqlitePool) -> Result<()> {
+    async fn save_dirty(&mut self, mut conn: PoolConnection<Sqlite>) -> Result<()> {
         let id = if let PlaylistMetadataStatus::Dirty(id) = self.status {
             id
         } else {
@@ -598,7 +610,7 @@ impl PlaylistMetadata {
             )
         };
 
-        let mut transaction = pool
+        let mut transaction = conn
             .begin()
             .await
             .context("Nelze získat transakci na poolu databáze")?;
@@ -638,14 +650,14 @@ impl PlaylistMetadata {
     /// ### Integrita databáze
     /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
     /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
-    async fn save_transient(&self, pool: &SqlitePool) -> Result<i64> {
+    async fn save_transient(&self, mut conn: PoolConnection<Sqlite>) -> Result<i64> {
         assert_eq!(
             self.status,
             PlaylistMetadataStatus::Transient,
             "Metoda `save_transient()` byla zavolána na ne-transient playlistu, toto by se nikdy nemělo stát"
         );
 
-        let mut transaction = pool
+        let mut transaction = conn
             .begin()
             .await
             .context("Nelze získat transakci na poolu databáze")?;
@@ -763,9 +775,9 @@ pub struct Playlist {
 
 impl Playlist {
     /// Načte playlist s daným ID z databáze.
-    pub async fn load(id: i64, pool: &SqlitePool) -> Result<Self> {
+    pub async fn load(id: i64, mut conn: PoolConnection<Sqlite>) -> Result<Self> {
         let playlist_record = query!("SELECT id, name, created FROM playlists WHERE id = $1", id)
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await
             .with_context(|| format!("Playlist s id {id} nebyl nalezen"))?;
 
@@ -779,28 +791,26 @@ impl Playlist {
             })?
             .and_utc();
 
-        let mut parts = query!(
+        let parts = query!(
             "SELECT part_order, kind FROM playlist_parts WHERE playlist_id = $1 ORDER BY part_order ASC",
             id
-        ).fetch(pool);
+        ).fetch_all(&mut *conn).await
+            .context("Nelze načíst další část playlistu z databáze")?
+        ;
 
         // Pořadí vkládání nemusíme řešit, z databáze to přijde již seřazené
         let mut items = Vec::new();
 
-        while let Some(part_record) = parts
-            .try_next()
-            .await
-            .context("Nelze načíst další část playlistu z databáze")?
-        {
+        for part_record in parts {
             match part_record.kind.as_str() {
                 DB_PLAYLIST_KIND_BIBLE_PASSAGE => {
                     let song_id = query!(
                         "SELECT song_id FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
                         id,
                         part_record.part_order
-                    ).fetch_one(pool).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?.song_id;
+                    ).fetch_one(&mut *conn).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?.song_id;
 
-                    let song = Song::load_from_db(song_id, pool)
+                    let song = Song::load_from_db(song_id, &mut conn)
                         .await
                         .context("Nelze načíst píseň do playlistu")?;
 
@@ -811,7 +821,7 @@ impl Playlist {
                         "SELECT translation_id , start_book_id , start_chapter , start_number , end_book_id , end_chapter , end_number FROM playlist_passages WHERE playlist_id = $1 AND part_order = $2",
                         id,
                         part_record.part_order
-                    ).fetch_one(pool).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?;
+                    ).fetch_one(&mut *conn).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?;
 
                     let start = VerseIndex::try_new(
                         (passage_record.start_book_id as u8).try_into().unwrap(),
@@ -841,14 +851,15 @@ impl Playlist {
                         )
                     })?;
 
-                    let passage = Passage::load(start, end, passage_record.translation_id, pool)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "Nelze načíst pasáž od {:?} do {:?} v překladu {}",
-                                start, end, passage_record.translation_id
-                            )
-                        })?;
+                    let passage =
+                        Passage::load(start, end, passage_record.translation_id, &mut conn)
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "Nelze načíst pasáž od {:?} do {:?} v překladu {}",
+                                    start, end, passage_record.translation_id
+                                )
+                            })?;
 
                     items.push(PlaylistItem::BiblePassage(passage));
                 }
@@ -869,7 +880,7 @@ impl Playlist {
 mod tests {
 
     use pretty_assertions::assert_eq;
-    use sqlx::query_file;
+    use sqlx::{SqlitePool, query_file};
 
     use super::*;
 
@@ -1039,12 +1050,17 @@ mod tests {
 
         tx1.commit().await.unwrap();
 
-        let passage_from_db = PlaylistItemMetadata::load_one(&pool, playlist_id, passage_order)
-            .await
-            .ok();
-        let song_from_db = PlaylistItemMetadata::load_one(&pool, playlist_id, song_order)
-            .await
-            .ok();
+        let passage_from_db = PlaylistItemMetadata::load_one(
+            pool.acquire().await.unwrap(),
+            playlist_id,
+            passage_order,
+        )
+        .await
+        .ok();
+        let song_from_db =
+            PlaylistItemMetadata::load_one(pool.acquire().await.unwrap(), playlist_id, song_order)
+                .await
+                .ok();
 
         assert_eq!(passage_from_db, Some(bible_passage));
         assert_eq!(song_from_db, Some(song));
@@ -1076,7 +1092,8 @@ mod tests {
 
         tx1.commit().await.unwrap();
 
-        let items = PlaylistItemMetadata::load_many(&pool, playlist_id).await;
+        let items =
+            PlaylistItemMetadata::load_many(pool.acquire().await.unwrap(), playlist_id).await;
 
         assert!(items.is_ok());
 
@@ -1119,7 +1136,12 @@ mod tests {
 
         tx2.commit().await.unwrap();
 
-        let res = PlaylistItemMetadata::load_one(&pool, playlist_id, passage_order).await;
+        let res = PlaylistItemMetadata::load_one(
+            pool.acquire().await.unwrap(),
+            playlist_id,
+            passage_order,
+        )
+        .await;
 
         assert!(res.is_err());
     }
@@ -1181,7 +1203,7 @@ mod tests {
 
         tx2.commit().await.unwrap();
 
-        let res = PlaylistItemMetadata::load_many(&pool, playlist_id).await;
+        let res = PlaylistItemMetadata::load_many(pool.acquire().await.unwrap(), playlist_id).await;
 
         assert!(res.is_ok_and(|vec| vec.is_empty()))
     }

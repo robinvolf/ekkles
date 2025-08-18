@@ -5,18 +5,20 @@ use crate::{
     components::{TopButtonsMessage, top_buttons},
     playlist_editor,
 };
-use ekkles_data::playlist::PlaylistMetadata;
+use anyhow::Context;
+use ekkles_data::playlist::{self, PlaylistMetadata};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, combo_box, container, horizontal_rule, row, text, text_input},
+    widget::{button, column, combo_box, container, row, text, text::danger, text_input},
 };
-use log::debug;
+use log::{debug, trace};
 
 #[derive(Debug)]
 pub struct PlaylistPicker {
     pub playlists: Option<combo_box::State<PlaylistPickerItem>>,
     pub picked_playlist: Option<PlaylistPickerItem>,
     pub new_playlist_name: String,
+    pub err_msg: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,9 @@ pub enum Message {
     PickedPlaylist,
     NewPlaylistNameChanged(String),
     CreateNewPlaylist,
+    ValidateNewPlaylistName,
+    NameAlreadyTaken,
+    EditPlaylist(PlaylistMetadata),
 }
 
 /// Update funkce pro PickPlaylist. Pokud bude zavolána na jiné obrazovce, zpanikaří.
@@ -82,17 +87,70 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             Task::none()
         }
         Message::PickedPlaylist => {
-            debug!("Byl vybrán playlist k otevření");
-            todo!("Ještě neumím editovat playlisty")
+            debug!("Byl vybrán playlist k otevření, jdu ho načíst z databáze");
+
+            // todo!("Ještě neumím editovat playlisty");
+            let conn = state.db.acquire();
+            let picked_playlist_id = picker
+                .picked_playlist
+                .as_ref()
+                .expect("Playlist byl vybrán, musí být Some")
+                .id;
+
+            Task::perform(
+                async move {
+                    let conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    PlaylistMetadata::load(picked_playlist_id, conn).await
+                },
+                |res| match res {
+                    Ok(loaded_playlist) => Message::EditPlaylist(loaded_playlist).into(),
+                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                },
+            )
         }
         Message::NewPlaylistNameChanged(input) => {
+            trace!("Změnil se textový vstup pro název nového playlistu");
             picker.new_playlist_name = input;
             Task::none()
         }
         Message::CreateNewPlaylist => {
-            let new_playlist = PlaylistMetadata::new(picker.new_playlist_name.trim());
-            debug!("Vytvářím nový playlist \"{}\"", new_playlist.get_name());
-            state.screen = Screen::EditPlaylist(playlist_editor::PlaylistEditor::new(new_playlist));
+            let name = picker.new_playlist_name.trim();
+            debug!("Vytvářím nový playlist \"{}\"", name);
+            let new_playlist = PlaylistMetadata::new(name);
+            Task::done(Message::EditPlaylist(new_playlist).into())
+        }
+        Message::ValidateNewPlaylistName => {
+            debug!("Zjišťuji, jestli se v databázi nachází playlist s daným názvem");
+            let conn = state.db.acquire();
+            let name = picker.new_playlist_name.clone();
+            Task::perform(
+                async move {
+                    let conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    playlist::is_name_available(conn, &name).await
+                },
+                |res| match res {
+                    Ok(available) => {
+                        if available {
+                            Message::CreateNewPlaylist.into()
+                        } else {
+                            Message::NameAlreadyTaken.into()
+                        }
+                    }
+                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                },
+            )
+        }
+        Message::NameAlreadyTaken => {
+            debug!("Playlist s daným názvem existuje, nic nevytvářím a nastavuju chybovou hlášku");
+            picker.err_msg = Some(format!(
+                "Playlist s názvem \"{}\" již existuje, vyber jiný název",
+                picker.new_playlist_name
+            ));
+            Task::none()
+        }
+        Message::EditPlaylist(playlist) => {
+            debug!("Vybrán playlist, přecházím na editaci {:#?}", playlist);
+            state.screen = Screen::EditPlaylist(playlist_editor::PlaylistEditor::new(playlist));
             Task::none()
         }
     }
@@ -104,6 +162,7 @@ impl PlaylistPicker {
             playlists: None,
             picked_playlist: None,
             new_playlist_name: String::from(""),
+            err_msg: None,
         }
     }
 
@@ -130,10 +189,11 @@ impl PlaylistPicker {
                         row![
                             text_input("Název nového playlistu", &self.new_playlist_name)
                                 .on_input(|input| Message::NewPlaylistNameChanged(input))
-                                .on_submit(Message::CreateNewPlaylist),
-                            button("Vytvořit!").on_press(Message::CreateNewPlaylist),
+                                .on_submit(Message::ValidateNewPlaylistName),
+                            button("Vytvořit!").on_press(Message::ValidateNewPlaylistName),
                         ]
-                        .spacing(10)
+                        .spacing(10),
+                        text(self.err_msg.clone().unwrap_or(String::from(""))).style(danger)
                     ]
                     .spacing(10)
                 ]

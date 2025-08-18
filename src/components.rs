@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use iced::{
     Element, Length,
     widget::{button, row},

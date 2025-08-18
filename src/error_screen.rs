@@ -1,4 +1,3 @@
-use anyhow::Error;
 use iced::{
     Element, Length,
     alignment::Horizontal,

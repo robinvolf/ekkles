@@ -1,15 +1,15 @@
+use crate::Screen;
 use crate::pick_playlist::{self, Message as PpMessage};
-use crate::{Screen, pick_playlist::PlaylistPickerItem};
 use anyhow::Context;
-use ekkles_data::playlist::{self, PlaylistMetadata};
+use ekkles_data::playlist::{self};
 use iced::Task;
-use log::{debug, warn};
+use log::{debug, trace, warn};
 
-use crate::{Ekkles, Message, playlist_editor};
+use crate::{Ekkles, Message};
 
 impl Ekkles {
     pub fn update(&mut self, msg: Message) -> Task<Message> {
-        debug!("Přišla zpráva: {:?}", msg);
+        trace!("Přišla zpráva: {:?}", msg);
 
         match (msg, &mut self.screen) {
             (Message::WindowOpened(id), Screen::PickPlaylist(_icker)) => {

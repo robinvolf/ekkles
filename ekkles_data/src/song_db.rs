@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::Song;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use sqlx::{SqlitePool, query};
+use sqlx::{Sqlite, SqlitePool, pool::PoolConnection, query};
 
 const TAG_SPLIT_STRING: &str = " ";
 
@@ -95,12 +95,12 @@ impl Song {
     /// Vrátí Error, když:
     /// - Se vyskytnou chyby při čtení z databáze
     /// - Načtená píseň nesplňuje invariant (viz dokumentace [Song])
-    pub async fn load_from_db(id: i64, pool: &SqlitePool) -> Result<Self> {
+    pub async fn load_from_db(id: i64, conn: &mut PoolConnection<Sqlite>) -> Result<Self> {
         let record = query!(
             "SELECT title, author, part_order FROM songs WHERE id = $1",
             id
         )
-        .fetch_one(pool)
+        .fetch_one(conn.as_mut())
         .await
         .with_context(|| format!("Píseň s id {id} nebyla nalezena"))?;
 
@@ -112,8 +112,8 @@ impl Song {
             .map(|str| str.to_string())
             .collect();
 
-        let mut lyrics =
-            query!("SELECT tag, lyrics FROM song_parts WHERE song_id = $1", id).fetch(pool);
+        let mut lyrics = query!("SELECT tag, lyrics FROM song_parts WHERE song_id = $1", id)
+            .fetch(conn.as_mut());
 
         let mut parts = HashMap::new();
 

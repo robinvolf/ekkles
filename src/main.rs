@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
 use iced::Element;
 use iced::window::{self, Id, Settings};
 use iced::{Subscription, Task};
@@ -40,7 +39,7 @@ impl Screen {
         match self {
             Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
             Screen::ErrorOccurred(err) => error_screen::view(err),
-            Screen::EditPlaylist(editor) => todo!("Ještě nemáme view pro editor"),
+            Screen::EditPlaylist(_editor) => todo!("Ještě nemáme view pro editor"),
         }
     }
 }

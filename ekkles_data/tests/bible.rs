@@ -114,7 +114,9 @@ async fn load_passage_one_book_test() {
         ),
     ];
 
-    let passage = Passage::load(from, to, translation_id, &db).await.unwrap();
+    let passage = Passage::load(from, to, translation_id, &mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let verses = passage.get_verses();
 
@@ -201,7 +203,9 @@ async fn load_passage_over_book_boundary_test() {
         ),
     ];
 
-    let passage = Passage::load(from, to, translation_id, &db).await.unwrap();
+    let passage = Passage::load(from, to, translation_id, &mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let verses = passage.get_verses();
 
