@@ -481,6 +481,10 @@ impl PlaylistMetadata {
         self.status
     }
 
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
     /// Convenience funkce pro vkládání písní na konec playlistu. Má stejné chování jako [`PlaylistMetadata::add_song`].
     pub fn push_song(&mut self, song_id: i64) {
         self.add_song(song_id, self.items.len());

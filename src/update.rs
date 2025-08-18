@@ -1,11 +1,11 @@
 use crate::pick_playlist::Message as PpMessage;
 use crate::{Screen, pick_playlist::PlaylistPickerItem};
 use anyhow::Context;
-use ekkles_data::playlist;
+use ekkles_data::playlist::{self, PlaylistMetadata};
 use iced::Task;
 use log::{debug, warn};
 
-use crate::{Ekkles, Message};
+use crate::{Ekkles, Message, playlist_editor};
 
 impl Ekkles {
     pub fn update(&mut self, msg: Message) -> Task<Message> {
@@ -24,7 +24,7 @@ impl Ekkles {
                         },
                         |res| match res {
                             Ok(pls) => Message::PlaylistPicker(PpMessage::PlaylistsLoaded(pls)),
-                            Err(e) => Message::ErrorOccured(format!("{:?}", e)),
+                            Err(e) => Message::FatalErrorOccured(format!("{:?}", e)),
                         },
                     )
                 } else {
@@ -62,11 +62,28 @@ impl Ekkles {
                 debug!("Byl vybrán playlist k otevření");
                 todo!("Ještě neumím editovat playlisty")
             }
+            (
+                Message::PlaylistPicker(PpMessage::NewPlaylistNameChanged(input)),
+                Screen::PickPlaylist(picker),
+            ) => {
+                picker.new_playlist_name = input;
+                Task::none()
+            }
+            (
+                Message::PlaylistPicker(PpMessage::CreateNewPlaylist),
+                Screen::PickPlaylist(picker),
+            ) => {
+                let new_playlist = PlaylistMetadata::new(picker.new_playlist_name.trim());
+                debug!("Vytvářím nový playlist \"{}\"", new_playlist.get_name());
+                self.screen =
+                    Screen::EditPlaylist(playlist_editor::PlaylistEditor::new(new_playlist));
+                Task::none()
+            }
             (Message::ShouldQuit, _) => {
                 debug!("Ukončuji aplikaci");
                 iced::exit()
             }
-            (Message::ErrorOccured(e), _) => {
+            (Message::FatalErrorOccured(e), _) => {
                 self.screen = Screen::ErrorOccurred(e);
                 Task::none()
             }

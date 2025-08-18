@@ -3,13 +3,14 @@ use std::fmt::Display;
 use crate::components::{TopButtonsMessage, top_buttons};
 use iced::{
     Element, Length,
-    widget::{column, combo_box, container, text},
+    widget::{button, column, combo_box, container, horizontal_rule, row, text, text_input},
 };
 
 #[derive(Debug)]
 pub struct PlaylistPicker {
     pub playlists: Option<combo_box::State<PlaylistPickerItem>>,
     pub picked_playlist: Option<PlaylistPickerItem>,
+    pub new_playlist_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,8 @@ pub enum Message {
     TopButtonPlaylists,
     PlaylistsLoaded(Vec<(i64, String)>),
     PickedPlaylist,
+    NewPlaylistNameChanged(String),
+    CreateNewPlaylist,
 }
 
 impl PlaylistPicker {
@@ -52,6 +55,7 @@ impl PlaylistPicker {
         Self {
             playlists: None,
             picked_playlist: None,
+            new_playlist_name: String::from(""),
         }
     }
 
@@ -70,10 +74,27 @@ impl PlaylistPicker {
         column![
             top_buttons(crate::components::TopButtonsPickedSection::Playlists)
                 .map(|msg| msg.into()),
-            container(column!("Vyber playlist", box_with_playlists))
-                .padding(20)
-                .height(Length::Fill)
-                .width(Length::Fill)
+            container(
+                column![
+                    column!["Vyber playlist", box_with_playlists].spacing(10),
+                    column![
+                        "Nebo vytvoř nový",
+                        row![
+                            text_input("Název nového playlistu", &self.new_playlist_name)
+                                .on_input(|input| Message::NewPlaylistNameChanged(input))
+                                .on_submit(Message::CreateNewPlaylist),
+                            button("Vytvořit!").on_press(Message::CreateNewPlaylist),
+                        ]
+                        .spacing(10)
+                    ]
+                    .spacing(10)
+                ]
+                .spacing(30)
+                .max_width(1000)
+            )
+            .padding(10)
+            .center_x(Length::FillPortion(1))
+            .center_y(Length::Fill),
         ]
         .into()
     }
