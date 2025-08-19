@@ -52,8 +52,9 @@ impl From<Message> for crate::Message {
 pub enum Message {
     TopButtonSongs,
     TopButtonPlaylists,
+    LoadPlaylists,
     PlaylistsLoaded(Vec<(i64, String)>),
-    PickedPlaylist,
+    PickedPlaylist(i64),
     NewPlaylistNameChanged(String),
     CreateNewPlaylist,
     ValidateNewPlaylistName,
@@ -86,16 +87,12 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             picker.playlists = Some(iced::widget::combo_box::State::new(options));
             Task::none()
         }
-        Message::PickedPlaylist => {
+        Message::PickedPlaylist(id) => {
             debug!("Byl vybrán playlist k otevření, jdu ho načíst z databáze");
 
             // todo!("Ještě neumím editovat playlisty");
             let conn = state.db.acquire();
-            let picked_playlist_id = picker
-                .picked_playlist
-                .as_ref()
-                .expect("Playlist byl vybrán, musí být Some")
-                .id;
+            let picked_playlist_id = id;
 
             Task::perform(
                 async move {
@@ -153,6 +150,21 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             state.screen = Screen::EditPlaylist(playlist_editor::PlaylistEditor::new(playlist));
             Task::none()
         }
+        Message::LoadPlaylists => {
+            debug!("Načítám seznam playlistů pro výběr playlistů");
+            // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
+            let conn = state.db.acquire();
+            Task::perform(
+                async move {
+                    let conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    playlist::get_available(conn).await
+                },
+                |res| match res {
+                    Ok(pls) => Message::PlaylistsLoaded(pls).into(),
+                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                },
+            )
+        }
     }
 }
 
@@ -172,7 +184,7 @@ impl PlaylistPicker {
                 self.playlists.as_ref().unwrap(),
                 "Vyber playlist...",
                 self.picked_playlist.as_ref(),
-                |_| Message::PickedPlaylist,
+                |picked| Message::PickedPlaylist(picked.id),
             ))
         } else {
             text("Načítám playlisty z databáze").into()
@@ -205,5 +217,11 @@ impl PlaylistPicker {
             .center_y(Length::Fill),
         ]
         .into()
+    }
+}
+
+impl Default for PlaylistPicker {
+    fn default() -> Self {
+        Self::new()
     }
 }

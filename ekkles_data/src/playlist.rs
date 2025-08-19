@@ -462,6 +462,21 @@ impl PlaylistMetadata {
         }
     }
 
+    /// Vytvoří nový playlist se jménem `name` a s položkami z `other`. Stav nového
+    /// playlistu bude [`PlaylistMetadataStatus::Transient`] a čas jeho vytvoření
+    /// bude čas zavolání této funkce.
+    ///
+    /// ### Druhý playlist
+    /// Z druhého playlistu bude přesunut vektor s položkami.
+    ///
+    /// ### Proč ne move???
+    /// Protože mutex!
+    pub fn from_other(name: &str, other: &mut PlaylistMetadata) -> Self {
+        let mut new = Self::new(name);
+        std::mem::swap(&mut new.items, &mut other.items);
+        new
+    }
+
     /// Načte existující playlist s daným ID z databáze, status bude mít nastaven na
     /// [`PlaylistMetadataStatus::Clean`]. Pokud takový playlist neexistuje
     /// nebo se něco v pokazí při načítání, vrátí Error.

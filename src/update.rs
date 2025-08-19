@@ -1,7 +1,5 @@
-use crate::Screen;
-use crate::pick_playlist::{self, Message as PpMessage};
-use anyhow::Context;
-use ekkles_data::playlist::{self};
+use crate::pick_playlist;
+use crate::{Screen, playlist_editor};
 use iced::Task;
 use log::{debug, trace, warn};
 
@@ -15,18 +13,9 @@ impl Ekkles {
             (Message::WindowOpened(id), Screen::PickPlaylist(_icker)) => {
                 if id == self.main_window_id {
                     debug!("Hlavní okno otevřeno, načítám playlisty z databáze");
-                    // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
-                    let conn = self.db.acquire();
-                    Task::perform(
-                        async move {
-                            let conn = conn.await.context("Nelze získat připojení k databázi")?;
-                            playlist::get_available(conn).await
-                        },
-                        |res| match res {
-                            Ok(pls) => Message::PlaylistPicker(PpMessage::PlaylistsLoaded(pls)),
-                            Err(e) => Message::FatalErrorOccured(format!("{:?}", e)),
-                        },
-                    )
+                    Task::done(Message::PlaylistPicker(
+                        pick_playlist::Message::LoadPlaylists,
+                    ))
                 } else {
                     todo!("Jiná okna nejsou implementována")
                 }
@@ -41,6 +30,9 @@ impl Ekkles {
             }
             (Message::PlaylistPicker(msg), Screen::PickPlaylist(_)) => {
                 pick_playlist::update(self, msg)
+            }
+            (Message::PlaylistEditor(msg), Screen::EditPlaylist(_)) => {
+                playlist_editor::PlaylistEditor::update(self, msg)
             }
             (Message::ShouldQuit, _) => {
                 debug!("Ukončuji aplikaci");

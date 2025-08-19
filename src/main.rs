@@ -39,7 +39,7 @@ impl Screen {
         match self {
             Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
             Screen::ErrorOccurred(err) => error_screen::view(err),
-            Screen::EditPlaylist(_editor) => todo!("Ještě nemáme view pro editor"),
+            Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
         }
     }
 }
@@ -52,8 +52,10 @@ enum Message {
     WindowOpened(Id),
     /// Bylo zavřeno hlavní okno, měli bychom ukončit prezentování
     WindowClosed(Id),
-    // Message z obrazovky "PlaylistPicker"
+    /// Message z obrazovky "PlaylistPicker"
     PlaylistPicker(pick_playlist::Message),
+    /// Message z obrazovky "PlaylistEditor"
+    PlaylistEditor(playlist_editor::Message),
     /// Nastala nezotavitelná chyba, měli bychom ukončit program. (ukládat pouhou String
     /// reprezentaci je ošklivé, ale [`anyhow::Error`] neimplementuje [`Clone`]
     /// a [`Message`] musí být `Clone`)
