@@ -6,8 +6,8 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
 - [X] CLI utilitka pro import písní a biblí do SQLite databáze
   - Jediný problém tu budou async funkce, musí se tam dát tokio runtime
-- [ ] Začít pracovat na GUI Ekklesu, vůbec zjistit jak rozumně udělat víc oken/přechody mezi nimi
-- [ ] Datový model pro playlist, aby pak šel z GUI ukládat, načítat, editovat (CRUD)
+- [X] Začít pracovat na GUI Ekklesu, vůbec zjistit jak rozumně udělat víc oken/přechody mezi nimi
+- [X] Datový model pro playlist, aby pak šel z GUI ukládat, načítat, editovat (CRUD)-[ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno-[ ] Přidat možnost smazat playlist-[ ] Dodělat na backendu-[ ] Napsat testy pro backend-[ ] Zjistit, jestli nejdou nějak dobře psát testy pro Iced-[ ] Zprovozni přidávání písní-[ ] Napsat picker písní-[ ] Zprovozni přidávání pasáží-[ ] Napsat picker pasáží
 
 ## Vývoj
 
