@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use crate::{
     Ekkles, Screen,
     components::{TopButtonsMessage, TopButtonsPickedSection, top_buttons},
-    pick_playlist::PlaylistPicker,
+    pick_playlist::{self, PlaylistPicker},
 };
 
 #[derive(Debug, Clone)]
@@ -88,12 +88,10 @@ impl PlaylistEditor {
             (status, name)
         }; // V separátním scope, abychom tady dropli mutex
 
-        let (save_button_msg, delete_button_msg) = match playlist_status {
-            playlist::PlaylistMetadataStatus::Transient => (Some(Message::SavePlaylist), None),
-            playlist::PlaylistMetadataStatus::Clean(_) => (None, Some(Message::DeletePlaylist)),
-            playlist::PlaylistMetadataStatus::Dirty(_) => {
-                (Some(Message::SavePlaylist), Some(Message::DeletePlaylist))
-            }
+        let save_button_msg = match playlist_status {
+            playlist::PlaylistMetadataStatus::Transient => Some(Message::SavePlaylist),
+            playlist::PlaylistMetadataStatus::Clean(_) => None,
+            playlist::PlaylistMetadataStatus::Dirty(_) => Some(Message::SavePlaylist),
         };
 
         Into::<Element<Message>>::into(column![
@@ -106,7 +104,7 @@ impl PlaylistEditor {
                             .on_press_maybe(save_button_msg)
                             .width(Length::Fill),
                         row![
-                            text_input("Název nového playlistu", "")
+                            text_input("Název nového playlistu", &self.new_playlist_name)
                                 .on_input(Message::NewPlaylistNameChanged),
                             button("Uložit jako").on_press(Message::SavePlaylistAsClicked)
                         ]
@@ -116,7 +114,7 @@ impl PlaylistEditor {
                             .width(Length::Fill),
                         button("Smazat playlist")
                             .style(button::danger)
-                            .on_press_maybe(delete_button_msg)
+                            .on_press(Message::DeletePlaylist)
                             .width(Length::Fill),
                         button("Přidat píseň")
                             .on_press(Message::AddSong)
@@ -149,7 +147,7 @@ impl PlaylistEditor {
             .padding(10)
             .center_x(Length::FillPortion(1))
         ])
-        .explain(Color::BLACK)
+        // .explain(Color::BLACK)
     }
 
     /// Update funkce pro editor. Pokud je tato funkce zavolána nad jinou obrazovkou
@@ -257,12 +255,25 @@ impl PlaylistEditor {
                     )
                 }
 
-                panic!("Ještě neumím mazat playlisty")
-                // Asi bych měl jít zpátky na obrazovku výběru playlistu
+                let conn = state.db.acquire();
+                let playlist = editor.playlist.clone();
+                Task::perform(
+                    async move {
+                        let mut conn = conn.await?;
+                        let mut playlist = playlist.lock().await;
+                        playlist.delete(&mut conn).await
+                    },
+                    |res| match res {
+                        Ok(_) => Message::ReturnToPlaylistPicker.into(),
+                        Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                    },
+                )
             }
             Message::ReturnToPlaylistPicker => {
                 state.screen = Screen::PickPlaylist(PlaylistPicker::default());
-                Task::none()
+                Task::done(crate::Message::PlaylistPicker(
+                    pick_playlist::Message::LoadPlaylists,
+                ))
             }
             Message::SaveAndExit => {
                 let playlist_status = { editor.playlist.blocking_lock().get_status() };

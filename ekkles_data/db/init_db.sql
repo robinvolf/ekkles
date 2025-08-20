@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS playlist_parts (
     part_order INTEGER NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('song', 'bible')),
     PRIMARY KEY (playlist_id, part_order),
-    FOREIGN KEY (playlist_id) REFERENCES playlists (id)
+    FOREIGN KEY (playlist_id) REFERENCES playlists (id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS playlist_songs (
@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS playlist_songs (
     part_order INTEGER NOT NULL,
     song_id INTEGER NOT NULL,
     PRIMARY KEY (playlist_id, part_order),
+    FOREIGN KEY (playlist_id) REFERENCES playlists (id) ON DELETE CASCADE,
     FOREIGN KEY (song_id) REFERENCES songs (id)
 );
 
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS playlist_passages (
     end_chapter INTEGER NOT NULL,
     end_number INTEGER NOT NULL,
     PRIMARY KEY (playlist_id, part_order),
+    FOREIGN KEY (playlist_id) REFERENCES playlists (id) ON DELETE CASCADE,
     FOREIGN KEY (translation_id, start_book_id, start_chapter, start_number) REFERENCES verses (translation_id, book_id, chapter, number),
     FOREIGN KEY (translation_id, end_book_id, end_chapter, end_number) REFERENCES verses (translation_id, book_id, chapter, number)
 );

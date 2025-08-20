@@ -503,6 +503,21 @@ impl PlaylistMetadata {
         })
     }
 
+    /// Smaže playlist z databáze a nastaví jeho stav
+    /// na [`PlaylistMetadataStatus::Transient`].
+    pub async fn delete(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
+        match self.status {
+            PlaylistMetadataStatus::Transient => Ok(()),
+            PlaylistMetadataStatus::Clean(id) | PlaylistMetadataStatus::Dirty(id) => {
+                query!("DELETE FROM playlists WHERE id = $1", id)
+                    .execute(conn.as_mut())
+                    .await
+                    .context("Nelze smazat playlist z databáze")
+                    .map(|_| ())
+            }
+        }
+    }
+
     /// Získá status playlistu, viz: [`PlaylistMetadataStatus`]
     pub fn get_status(&self) -> PlaylistMetadataStatus {
         self.status
