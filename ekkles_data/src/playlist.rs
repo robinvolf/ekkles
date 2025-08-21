@@ -61,7 +61,7 @@ pub enum PlaylistMetadataStatus {
 
 /// Playlist se skládá z vícero druhů položek, tento enum je rozlišuje.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum PlaylistItemMetadata {
+pub enum PlaylistItemMetadata {
     BiblePassage {
         translation_id: i64,
         from: VerseIndex,
@@ -525,6 +525,10 @@ impl PlaylistMetadata {
 
     pub fn get_name(&self) -> &str {
         &self.name
+    }
+
+    pub fn get_items(&self) -> &[PlaylistItemMetadata] {
+        &self.items
     }
 
     /// Convenience funkce pro vkládání písní na konec playlistu. Má stejné chování jako [`PlaylistMetadata::add_song`].

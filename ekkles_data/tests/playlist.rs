@@ -12,7 +12,7 @@ use ekkles_data::{
         self, get_available_translations,
         indexing::{Book, VerseIndex},
     },
-    playlist::{PlaylistMetadata, PlaylistMetadataStatus},
+    playlist::{PlaylistItemMetadata, PlaylistMetadata, PlaylistMetadataStatus},
 };
 use pretty_assertions::assert_eq;
 use sqlx::query;
@@ -74,7 +74,7 @@ async fn save_modified() {
 }
 
 #[tokio::test]
-async fn delete() {
+async fn delete_playlist() {
     let pool = common::setup_db_with_bible_and_songs().await;
 
     let mut playlist = PlaylistMetadata::new("Testovací playlist");
@@ -107,11 +107,6 @@ async fn delete() {
         panic!("Playlist není po uložení ve stavu clean");
     };
 
-    assert!(matches!(
-        playlist.get_status(),
-        PlaylistMetadataStatus::Clean(_)
-    ));
-
     playlist
         .delete(&mut pool.acquire().await.unwrap())
         .await
@@ -138,4 +133,126 @@ async fn delete() {
     assert!(items.is_empty());
     assert!(songs.is_empty());
     assert!(passages.is_empty());
+}
+
+#[tokio::test]
+async fn delete_item() {
+    let pool = common::setup_db_with_bible_and_songs().await;
+
+    let mut playlist = PlaylistMetadata::new("Testovací playlist");
+
+    let song_id = Song::get_available_from_db(&pool)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .0;
+    let translation_id = get_available_translations(&pool)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .0;
+
+    playlist.push_song(song_id);
+    playlist.push_bible_passage(
+        translation_id,
+        VerseIndex::try_new(Book::John, 1, 1).unwrap(),
+        VerseIndex::try_new(Book::John, 1, 1).unwrap(),
+    );
+
+    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+
+    let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
+        id
+    } else {
+        panic!("Playlist není po uložení ve stavu clean");
+    };
+
+    // Měl by smazat píseň
+    playlist.delete_item(0).unwrap();
+
+    // Uložíme bez písně
+    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+
+    let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+
+    let items = loaded_playlist.get_items();
+
+    assert_eq!(
+        items,
+        &[PlaylistItemMetadata::BiblePassage {
+            translation_id,
+            from: VerseIndex::try_new(Book::John, 1, 1).unwrap(),
+            to: VerseIndex::try_new(Book::John, 1, 1).unwrap()
+        }]
+    );
+
+    let songs = query!("SELECT * FROM playlist_songs WHERE playlist_id = $1", id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    assert!(songs.is_empty());
+}
+
+#[tokio::test]
+async fn swap_items() {
+    let pool = common::setup_db_with_bible_and_songs().await;
+
+    let mut playlist = PlaylistMetadata::new("Testovací playlist");
+
+    let song_id = Song::get_available_from_db(&pool)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .0;
+    let translation_id = get_available_translations(&pool)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .0;
+
+    playlist.push_song(song_id);
+    playlist.push_bible_passage(
+        translation_id,
+        VerseIndex::try_new(Book::John, 1, 1).unwrap(),
+        VerseIndex::try_new(Book::John, 1, 1).unwrap(),
+    );
+
+    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+
+    let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
+        id
+    } else {
+        panic!("Playlist není po uložení ve stavu clean");
+    };
+
+    // Prohodí píseň a pasáž
+    playlist.swap_items(0, 1).unwrap();
+
+    // Uložíme po prohození
+    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+
+    let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+
+    let items = loaded_playlist.get_items();
+
+    assert_eq!(
+        items,
+        &[
+            PlaylistItemMetadata::BiblePassage {
+                translation_id,
+                from: VerseIndex::try_new(Book::John, 1, 1).unwrap(),
+                to: VerseIndex::try_new(Book::John, 1, 1).unwrap()
+            },
+            PlaylistItemMetadata::Song(song_id)
+        ]
+    );
 }
