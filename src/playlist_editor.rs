@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use ekkles_data::playlist::{self, PlaylistMetadata, PlaylistMetadataStatus};
+use ekkles_data::{
+    Song,
+    playlist::{self, PlaylistMetadata, PlaylistMetadataStatus},
+};
 use iced::{
     Color, Element, Length, Task,
     alignment::{Horizontal, Vertical},
@@ -14,12 +17,15 @@ use crate::{
     Ekkles, Screen,
     components::{TopButtonsMessage, TopButtonsPickedSection, top_buttons},
     pick_playlist::{self, PlaylistPicker},
+    song_picker::SongPicker,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
     TopButtonsPlaylist,
     TopButtonsSongs,
+    LoadSongNameCache,
+    SongNameCacheLoaded(Vec<(i64, String)>),
     SavePlaylist,
     PlaylistSavedSuccessfully,
     SavePlaylistAsClicked,
@@ -55,7 +61,6 @@ pub struct PlaylistEditor {
     /// Editovaný playlist (potřebujeme ho zabalit do `Arc<Mutex<>>`, protože když jej ukládáme,
     /// mutujeme jeho stav a protože daný future předáme iced runtime, nemůže to být reference).
     playlist: Arc<Mutex<PlaylistMetadata>>,
-    is_saved: bool,
     new_playlist_name: String,
     new_playlist_err_msg: String,
     song_name_cache: Option<Vec<(i64, String)>>,
@@ -64,13 +69,6 @@ pub struct PlaylistEditor {
 impl PlaylistEditor {
     pub fn new(playlist: PlaylistMetadata) -> Self {
         Self {
-            is_saved: match playlist.get_status() {
-                playlist::PlaylistMetadataStatus::Transient => false,
-                playlist::PlaylistMetadataStatus::Clean(_) => true,
-                playlist::PlaylistMetadataStatus::Dirty(_) => panic!(
-                    "Právě jsme dostali dirty playlist do editoru, to by se nikdy nemělo stát"
-                ),
-            },
             playlist: Arc::new(Mutex::new(playlist)),
             new_playlist_name: String::new(),
             new_playlist_err_msg: String::new(),
@@ -93,6 +91,27 @@ impl PlaylistEditor {
             playlist::PlaylistMetadataStatus::Clean(_) => None,
             playlist::PlaylistMetadataStatus::Dirty(_) => Some(Message::SavePlaylist),
         };
+
+        let playlist = self.playlist.blocking_lock();
+
+        let playlist_items = playlist.get_items().iter().map(|item| match item {
+            playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => {
+                button(text(format!("Pasáž {} - {}", from, to))).into()
+            }
+            playlist::PlaylistItemMetadata::Song(sought_id) => button(text(format!(
+                "Píseň {}",
+                self.song_name_cache
+                    .as_ref()
+                    .map(|cache| cache
+                        .iter()
+                        .find(|(id, _)| id == sought_id)
+                        .unwrap()
+                        .1
+                        .as_str())
+                    .unwrap_or("...")
+            )))
+            .into(),
+        });
 
         Into::<Element<Message>>::into(column![
             top_buttons(TopButtonsPickedSection::Playlists).map(|msg| msg.into()),
@@ -141,7 +160,7 @@ impl PlaylistEditor {
                 ]
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Center),
-                column!["Tady budou položky"].width(Length::FillPortion(2)),
+                column(playlist_items).width(Length::FillPortion(2)),
                 column([]).width(Length::FillPortion(1))
             ])
             .padding(10)
@@ -203,10 +222,16 @@ impl PlaylistEditor {
             }
             Message::StartPresentation => todo!(),
             Message::AddBiblePassage => todo!(),
-            Message::AddSong => todo!(),
+            Message::AddSong => {
+                debug!("Přecházím na výběr písně");
+                let playlist = editor.playlist.blocking_lock().clone();
+                state.screen = Screen::PickSong(SongPicker::new(playlist));
+                Task::done(crate::Message::SongPicker(
+                    crate::song_picker::Message::LoadSongs,
+                ))
+            }
             Message::PlaylistSavedSuccessfully => {
                 debug!("Playlist byl úspéšně uložen");
-                editor.is_saved = true;
                 editor.new_playlist_err_msg.clear();
                 Task::none()
             }
@@ -314,6 +339,26 @@ impl PlaylistEditor {
                         ])
                     }
                 }
+            }
+            Message::LoadSongNameCache => {
+                debug!("Načítám cache názvů písní");
+                let conn = state.db.acquire();
+                Task::perform(
+                    async move {
+                        let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                        Song::get_available_from_db(&mut conn).await
+                    },
+                    |res| res,
+                )
+                .then(|res| match res {
+                    Ok(cache) => Task::done(Message::SongNameCacheLoaded(cache).into()),
+                    Err(e) => Task::done(crate::Message::FatalErrorOccured(format!("{:?}", e))),
+                })
+            }
+            Message::SongNameCacheLoaded(items) => {
+                debug!("Načtena cache názvů písní");
+                editor.song_name_cache = Some(items);
+                Task::none()
             }
         }
     }

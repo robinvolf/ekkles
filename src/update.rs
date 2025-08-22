@@ -1,5 +1,5 @@
-use crate::pick_playlist;
 use crate::{Screen, playlist_editor};
+use crate::{pick_playlist, song_picker};
 use iced::Task;
 use log::{debug, trace, warn};
 
@@ -33,6 +33,9 @@ impl Ekkles {
             }
             (Message::PlaylistEditor(msg), Screen::EditPlaylist(_)) => {
                 playlist_editor::PlaylistEditor::update(self, msg)
+            }
+            (Message::SongPicker(msg), Screen::PickSong(_)) => {
+                song_picker::SongPicker::update(self, msg)
             }
             (Message::ShouldQuit, _) => {
                 debug!("Ukončuji aplikaci");

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::Song;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use sqlx::{Sqlite, SqlitePool, pool::PoolConnection, query};
+use sqlx::{Sqlite, SqliteConnection, SqlitePool, pool::PoolConnection, query};
 
 const TAG_SPLIT_STRING: &str = " ";
 
@@ -137,7 +137,9 @@ impl Song {
 
     /// Získá vektor dvojic (id, název) všech dostupných písní v databázi. Pokud se vyskytne
     /// při čtení chyba, vrací `Error`.
-    pub async fn get_available_from_db(pool: &SqlitePool) -> Result<Vec<(i64, String)>> {
+    pub async fn get_available_from_db(
+        conn: &mut PoolConnection<Sqlite>,
+    ) -> Result<Vec<(i64, String)>> {
         query!("SELECT id, title FROM songs")
             .map(|record| {
                 (
@@ -145,7 +147,7 @@ impl Song {
                     record.title,
                 )
             })
-            .fetch_all(pool)
+            .fetch_all(conn.as_mut())
             .await
             .context("Nelze načíst seznam písní z databáze")
     }

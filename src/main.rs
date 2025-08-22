@@ -10,6 +10,7 @@ mod config;
 mod error_screen;
 mod pick_playlist;
 mod playlist_editor;
+mod song_picker;
 mod update;
 
 const PROGRAM_NAME: &str = "Ekkles";
@@ -26,6 +27,8 @@ enum Screen {
     ErrorOccurred(String),
     /// Editování playlistu
     EditPlaylist(playlist_editor::PlaylistEditor),
+    /// Vybírání písně k zařazení do playlistu
+    PickSong(song_picker::SongPicker),
 }
 
 struct Ekkles {
@@ -40,6 +43,7 @@ impl Screen {
             Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
             Screen::ErrorOccurred(err) => error_screen::view(err),
             Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
+            Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
         }
     }
 }
@@ -56,6 +60,7 @@ enum Message {
     PlaylistPicker(pick_playlist::Message),
     /// Message z obrazovky "PlaylistEditor"
     PlaylistEditor(playlist_editor::Message),
+    SongPicker(song_picker::Message),
     /// Nastala nezotavitelná chyba, měli bychom ukončit program. (ukládat pouhou String
     /// reprezentaci je ošklivé, ale [`anyhow::Error`] neimplementuje [`Clone`]
     /// a [`Message`] musí být `Clone`)

@@ -104,6 +104,9 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                     Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
                 },
             )
+            .chain(Task::done(
+                crate::playlist_editor::Message::LoadSongNameCache.into(),
+            ))
         }
         Message::NewPlaylistNameChanged(input) => {
             trace!("Změnil se textový vstup pro název nového playlistu");
@@ -182,7 +185,7 @@ impl PlaylistPicker {
         let box_with_playlists = if self.playlists.is_some() {
             Into::<Element<Message>>::into(combo_box(
                 self.playlists.as_ref().unwrap(),
-                "Vyber playlist...",
+                "Název playlistu",
                 self.picked_playlist.as_ref(),
                 |picked| Message::PickedPlaylist(picked.id),
             ))
