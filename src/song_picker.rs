@@ -96,7 +96,6 @@ impl SongPicker {
                 .padding(30),
                 column![text("Vyber píseň:"), picker]
                     .spacing(10)
-                    .max_width(1000)
                     .align_x(Alignment::Center)
                     .width(Length::FillPortion(2)),
                 container("").width(Length::FillPortion(1))

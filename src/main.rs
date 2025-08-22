@@ -5,6 +5,7 @@ use iced::window::{self, Id, Settings};
 use iced::{Subscription, Task};
 use sqlx::SqlitePool;
 
+mod bible_picker;
 mod components;
 mod config;
 mod error_screen;
@@ -29,6 +30,8 @@ enum Screen {
     EditPlaylist(playlist_editor::PlaylistEditor),
     /// Vybírání písně k zařazení do playlistu
     PickSong(song_picker::SongPicker),
+    /// Vybírání biblické pasáže k zařazení do playlistu
+    PickBible(bible_picker::BiblePicker),
 }
 
 struct Ekkles {
@@ -44,6 +47,7 @@ impl Screen {
             Screen::ErrorOccurred(err) => error_screen::view(err),
             Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
             Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
+            Screen::PickBible(bible_picker) => bible_picker.view().map(|msg| msg.into()),
         }
     }
 }
@@ -60,7 +64,10 @@ enum Message {
     PlaylistPicker(pick_playlist::Message),
     /// Message z obrazovky "PlaylistEditor"
     PlaylistEditor(playlist_editor::Message),
+    /// Message z obrazovky "SongPicker"
     SongPicker(song_picker::Message),
+    /// Message z obrazovky "BiblePicker"
+    BiblePicker(bible_picker::Message),
     /// Nastala nezotavitelná chyba, měli bychom ukončit program. (ukládat pouhou String
     /// reprezentaci je ošklivé, ale [`anyhow::Error`] neimplementuje [`Clone`]
     /// a [`Message`] musí být `Clone`)

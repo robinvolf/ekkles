@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 use roxmltree::{Document, Node, TextPos};
-use sqlx::{SqlitePool, query};
+use sqlx::{Sqlite, SqlitePool, pool::PoolConnection, query};
 
 pub mod indexing;
 
@@ -192,10 +192,12 @@ fn book_number_to_order(number: u32) -> u32 {
 }
 
 /// Vrátí vektor dvojic (id, název) všech dostupných překladů v databázi, pokud nelze načíst seznam z databáze, vrátí Error.
-pub async fn get_available_translations(pool: &SqlitePool) -> Result<Vec<(i64, String)>> {
+pub async fn get_available_translations(
+    conn: &mut PoolConnection<Sqlite>,
+) -> Result<Vec<(i64, String)>> {
     query!("SELECT id, name FROM translations")
         .map(|record| (record.id, record.name))
-        .fetch_all(pool)
+        .fetch_all(conn.as_mut())
         .await
         .context("Nelze načíst seznam překladů z databáze")
 }

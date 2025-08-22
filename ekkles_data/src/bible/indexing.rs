@@ -3,6 +3,78 @@ use log::trace;
 use sqlx::{Sqlite, pool::PoolConnection, query};
 use std::{fmt::Display, ops::RangeInclusive};
 
+use super::NUM_BOOKS_IN_THE_BIBLE;
+
+/// Seznam všech knih v Bibli
+pub const BIBLE_BOOKS: [Book; NUM_BOOKS_IN_THE_BIBLE] = [
+    Book::Genesis,
+    Book::Exodus,
+    Book::Leviticus,
+    Book::Numbers,
+    Book::Deuteronomy,
+    Book::Joshua,
+    Book::Judges,
+    Book::Ruth,
+    Book::Samuel1,
+    Book::Samuel2,
+    Book::Kings1,
+    Book::Kings2,
+    Book::Chronicles1,
+    Book::Chronicles2,
+    Book::Ezra,
+    Book::Nehemiah,
+    Book::Esther,
+    Book::Job,
+    Book::Psalms,
+    Book::Proverbs,
+    Book::Ecclesiastes,
+    Book::SongOfSolomon,
+    Book::Isaiah,
+    Book::Jeremiah,
+    Book::Lamentations,
+    Book::Ezekiel,
+    Book::Daniel,
+    Book::Hosea,
+    Book::Joel,
+    Book::Amos,
+    Book::Obadiah,
+    Book::Jonah,
+    Book::Micah,
+    Book::Nahum,
+    Book::Habakkuk,
+    Book::Zephaniah,
+    Book::Haggai,
+    Book::Zechariah,
+    Book::Malachi,
+    Book::Matthew,
+    Book::Mark,
+    Book::Luke,
+    Book::John,
+    Book::Acts,
+    Book::Romans,
+    Book::Corinthians1,
+    Book::Corinthians2,
+    Book::Galatians,
+    Book::Ephesians,
+    Book::Philippians,
+    Book::Colossians,
+    Book::Thessalonians1,
+    Book::Thessalonians2,
+    Book::Timothy1,
+    Book::Timothy2,
+    Book::Titus,
+    Book::Philemon,
+    Book::Hebrews,
+    Book::James,
+    Book::Peter1,
+    Book::Peter2,
+    Book::John1,
+    Book::John2,
+    Book::John3,
+    Book::Jude,
+    Book::Revelation,
+];
+
 /// Struktura reprezentující pasáž v Bibli. Celá pasáž je v jednom překladu,
 /// ale může se rozkládat přes hrany kapitol (např. Jan 21:24 - Skutky 1:2).
 ///
@@ -122,6 +194,12 @@ pub struct VerseIndex {
     verse_number: u8,
 }
 
+impl Display for VerseIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}:{}", self.book, self.chapter, self.verse_number)
+    }
+}
+
 impl VerseIndex {
     /// Pokusi se zkonstruovat nový index verše. Pokud taková kombinace knihy,
     /// kapitoly a verše neexistuje, vrátí None.
@@ -147,7 +225,7 @@ impl VerseIndex {
 /// Vrátí rozsah veršů kapitoly dané knihy.
 ///
 /// Pokud kniha neobsahuje kapitolu `chapter`, vrátí `None`.
-fn verses_in_chapter(book: Book, chapter: u8) -> Option<RangeInclusive<u8>> {
+pub fn verses_in_chapter(book: Book, chapter: u8) -> Option<RangeInclusive<u8>> {
     if !chapters_in_book(book).contains(&chapter) {
         return None;
     }
@@ -1352,7 +1430,7 @@ fn verses_in_chapter(book: Book, chapter: u8) -> Option<RangeInclusive<u8>> {
 }
 
 /// Vrátí rozsah kapitol v knize
-fn chapters_in_book(book: Book) -> RangeInclusive<u8> {
+pub fn chapters_in_book(book: Book) -> RangeInclusive<u8> {
     match book {
         Book::Genesis => 1..=50,
         Book::Exodus => 1..=40,

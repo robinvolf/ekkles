@@ -39,13 +39,13 @@ async fn save_modified() {
 
     let mut playlist = PlaylistMetadata::new("Testovací playlist");
 
-    let song_id = Song::get_available_from_db(&pool)
+    let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
         .unwrap()
         .0;
-    let translation_id = get_available_translations(&pool)
+    let translation_id = get_available_translations(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
@@ -79,13 +79,13 @@ async fn delete_playlist() {
 
     let mut playlist = PlaylistMetadata::new("Testovací playlist");
 
-    let song_id = Song::get_available_from_db(&pool)
+    let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
         .unwrap()
         .0;
-    let translation_id = get_available_translations(&pool)
+    let translation_id = get_available_translations(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
@@ -141,13 +141,13 @@ async fn delete_item() {
 
     let mut playlist = PlaylistMetadata::new("Testovací playlist");
 
-    let song_id = Song::get_available_from_db(&pool)
+    let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
         .unwrap()
         .0;
-    let translation_id = get_available_translations(&pool)
+    let translation_id = get_available_translations(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
@@ -204,13 +204,13 @@ async fn swap_items() {
 
     let mut playlist = PlaylistMetadata::new("Testovací playlist");
 
-    let song_id = Song::get_available_from_db(&pool)
+    let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()
         .unwrap()
         .0;
-    let translation_id = get_available_translations(&pool)
+    let translation_id = get_available_translations(&mut pool.acquire().await.unwrap())
         .await
         .unwrap()
         .first()

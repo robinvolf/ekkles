@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     Ekkles, Screen,
+    bible_picker::BiblePicker,
     components::{TopButtonsMessage, TopButtonsPickedSection, top_buttons},
     pick_playlist::{self, PlaylistPicker},
     song_picker::SongPicker,
@@ -221,7 +222,14 @@ impl PlaylistEditor {
                 )
             }
             Message::StartPresentation => todo!(),
-            Message::AddBiblePassage => todo!(),
+            Message::AddBiblePassage => {
+                debug!("Přecházím na výběr playlistu");
+                let playlist = editor.playlist.blocking_lock().clone();
+                state.screen = Screen::PickBible(BiblePicker::new(playlist));
+                Task::done(crate::Message::BiblePicker(
+                    crate::bible_picker::Message::LoadTranslations,
+                ))
+            }
             Message::AddSong => {
                 debug!("Přecházím na výběr písně");
                 let playlist = editor.playlist.blocking_lock().clone();
