@@ -82,7 +82,7 @@ pub const BIBLE_BOOKS: [Book; NUM_BOOKS_IN_THE_BIBLE] = [
 /// To, kde se pasáž nachází je určeno dvěma odkazy - počátkem (`from`) a koncem (`to`).
 /// Fungují jako [`RangeInclusive`], tedy, pokud `from == to`, znamená to,
 /// že pasáž obsahuje jeden verš.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Passage {
     /// Id překladu v databázi
     translation_id: i64,
@@ -98,7 +98,7 @@ pub struct Passage {
 
 impl Passage {
     /// Načte pasáž od verše `from` po verš `to` (včetně) v překladu identifikovaného
-    /// daným `id` z databáze pomocí poolu připojení `pool`. Pokud je `from` až po `to`
+    /// daným `id` z databáze pomocí připojení `conn`. Pokud je `from` až po `to`
     /// nebo je chyba s databází vrací Error.
     pub async fn load(
         from: VerseIndex,
@@ -148,9 +148,10 @@ impl Passage {
         .verse_order;
 
         let verses = query!(
-            "SELECT number, content FROM verses WHERE verse_order >= $1 AND verse_order <= $2;",
+            "SELECT number, content FROM verses WHERE verse_order >= $1 AND verse_order <= $2 AND translation_id = $3",
             verse_order_start,
             verse_order_end,
+            translation_id
         )
         .map(|record| (record.number as u8, record.content))
         .fetch_all(conn.as_mut())

@@ -672,7 +672,11 @@ impl PlaylistMetadata {
         transaction
             .commit()
             .await
-            .with_context(|| format!("Commit transakce uložení playlistu {} selhal", self.name))
+            .with_context(|| format!("Commit transakce uložení playlistu {} selhal", self.name))?;
+
+        self.status = PlaylistMetadataStatus::Clean(id);
+
+        Ok(())
     }
 
     /// Uloží čerstvý playlist do databáze, playlist byl pouze v paměti. V případě úspěchu vrátí  ID pod kterým byl playlist uložen, v opačném případě vrací Error.
