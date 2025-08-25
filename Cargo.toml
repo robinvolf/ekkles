@@ -15,12 +15,15 @@ log = {version = "0.4.27"}
 pretty_env_logger = {version = "0.5.0"}
 # Jednoduchý error handling
 anyhow = "1.0.98"
-# Pro (pouze) čtení XML souborů
+# Přístup k SQLite databázi, kde jsou uložené písně a bible
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 ekkles_data = { path = "ekkles_data" }
 # Na tokiu už jsem závislý skrze iced a a sqlx, ale abych měl přístup ke věcem z tokia,
 # natáhnu si to i přímo ve stejné verzi.
 tokio = {version = "1.44.2", features = ["macros", "rt"]}
+
+# Potřebuju regexy pro parsování vstupu při výběru biblických pasáží
+regex = {version = "1.11.2", default-features = false, features = ["std", "perf", "unicode-gencat"]}
 
 [dev-dependencies]
 # Aby v testech byly přehledné barevné diffy

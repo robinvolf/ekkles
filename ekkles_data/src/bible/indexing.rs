@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use log::trace;
 use sqlx::{Sqlite, pool::PoolConnection, query};
-use std::{fmt::Display, ops::RangeInclusive};
+use std::{fmt::Display, ops::RangeInclusive, str::FromStr};
 
 use super::NUM_BOOKS_IN_THE_BIBLE;
 
@@ -1629,6 +1629,14 @@ impl Book {
         } else {
             None
         }
+    }
+}
+
+impl FromStr for Book {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Book::parse(s).ok_or(anyhow!("{s} není biblická kniha"))
     }
 }
 

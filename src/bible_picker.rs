@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::Deref, sync::LazyLock};
 
 use anyhow::{Context, Result, anyhow, bail};
 use ekkles_data::{
@@ -16,6 +16,7 @@ use iced::{
     },
 };
 use log::{debug, trace};
+use regex::Regex;
 
 use crate::{Ekkles, Screen, playlist_editor::PlaylistEditor};
 
@@ -24,6 +25,7 @@ pub enum Message {
     LoadTranslations,
     TranslationsLoaded(Vec<TranslationPickerItem>),
     TranslationPicked(TranslationPickerItem),
+    QuickPickerContentChanged(String),
     FromBookPicked(Book),
     FromChapterPicked(u8),
     FromVersePicked(u8),
@@ -47,13 +49,9 @@ impl From<Message> for crate::Message {
 pub struct BiblePicker {
     playlist: PlaylistMetadata,
     translations: Option<Vec<TranslationPickerItem>>,
+    quick_picker_content: String,
     picked_translation: Option<TranslationPickerItem>,
-    picked_from_book: Option<Book>,
-    picked_from_chapter: Option<u8>,
-    picked_from_verse: Option<u8>,
-    picked_to_book: Option<Book>,
-    picked_to_chapter: Option<u8>,
-    picked_to_verse: Option<u8>,
+    indexes: BiblePickerIndexes,
     preview: Option<Passage>,
     err_msg: String,
 }
@@ -75,20 +73,16 @@ impl BiblePicker {
         Self {
             playlist,
             translations: None,
+            quick_picker_content: String::new(),
             picked_translation: None,
-            picked_from_book: None,
-            picked_from_chapter: None,
-            picked_from_verse: None,
-            picked_to_book: None,
-            picked_to_chapter: None,
-            picked_to_verse: None,
+            indexes: BiblePickerIndexes::new(),
             preview: None,
             err_msg: String::new(),
         }
     }
 
     pub fn view(&self) -> Element<Message> {
-        let upper_picker = row![
+        let quick_picker = row![
             pick_list(
                 // TODO: Opravdu je tu nutné klonovat?
                 self.translations.clone().unwrap_or(vec![]),
@@ -101,71 +95,93 @@ impl BiblePicker {
                 "Načítám překlady..."
             })
             .width(Length::FillPortion(1)),
-            text_input("Např. Jan 3:4 - 4:5", "").width(Length::FillPortion(3))
+            text_input("Např. Jan 3:4 - 4:5", &self.quick_picker_content)
+                .on_input(Message::QuickPickerContentChanged)
+                .on_submit(Message::PickPassage)
+                .width(Length::FillPortion(3))
         ];
 
         let detailed_picker = row![
             pick_list(
                 ekkles_data::bible::indexing::BIBLE_BOOKS,
-                self.picked_from_book,
+                self.indexes.picked_from_book,
                 Message::FromBookPicked
             )
             .placeholder("Kniha")
             .width(Length::FillPortion(3)),
-            match self.picked_from_book {
+            match self.indexes.picked_from_book {
                 Some(book) => pick_list(
                     chapters_in_book(book).collect::<Vec<u8>>(),
-                    self.picked_from_chapter,
+                    self.indexes.picked_from_chapter,
                     Message::FromChapterPicked
                 )
                 .placeholder("Kapitola"),
-                None => pick_list(vec![], self.picked_from_chapter, Message::FromChapterPicked)
-                    .placeholder("Vyber knihu"),
+                None => pick_list(
+                    vec![],
+                    self.indexes.picked_from_chapter,
+                    Message::FromChapterPicked
+                )
+                .placeholder("Vyber knihu"),
             }
             .width(Length::FillPortion(1)),
-            match (self.picked_from_book, self.picked_from_chapter) {
+            match (
+                self.indexes.picked_from_book,
+                self.indexes.picked_from_chapter
+            ) {
                 (Some(book), Some(chapter)) => pick_list(
                     verses_in_chapter(book, chapter)
                         .unwrap()
                         .collect::<Vec<u8>>(),
-                    self.picked_from_verse,
+                    self.indexes.picked_from_verse,
                     Message::FromVersePicked
                 )
                 .placeholder("Verš"),
-                _ => pick_list(vec![], self.picked_from_chapter, Message::FromVersePicked)
-                    .placeholder("Vyber kapitolu"),
+                _ => pick_list(
+                    vec![],
+                    self.indexes.picked_from_chapter,
+                    Message::FromVersePicked
+                )
+                .placeholder("Vyber kapitolu"),
             }
             .width(Length::FillPortion(1)),
             text("až").width(Length::FillPortion(1)).center(),
             pick_list(
                 ekkles_data::bible::indexing::BIBLE_BOOKS,
-                self.picked_to_book,
+                self.indexes.picked_to_book,
                 Message::ToBookPicked
             )
             .placeholder("Kniha")
             .width(Length::FillPortion(3)),
-            match self.picked_to_book {
+            match self.indexes.picked_to_book {
                 Some(book) => pick_list(
                     chapters_in_book(book).collect::<Vec<u8>>(),
-                    self.picked_to_chapter,
+                    self.indexes.picked_to_chapter,
                     Message::ToChapterPicked
                 )
                 .placeholder("Kapitola"),
-                None => pick_list(vec![], self.picked_to_chapter, Message::ToChapterPicked)
-                    .placeholder("Vyber knihu"),
+                None => pick_list(
+                    vec![],
+                    self.indexes.picked_to_chapter,
+                    Message::ToChapterPicked
+                )
+                .placeholder("Vyber knihu"),
             }
             .width(Length::FillPortion(1)),
-            match (self.picked_to_book, self.picked_to_chapter) {
+            match (self.indexes.picked_to_book, self.indexes.picked_to_chapter) {
                 (Some(book), Some(chapter)) => pick_list(
                     verses_in_chapter(book, chapter)
                         .unwrap()
                         .collect::<Vec<u8>>(),
-                    self.picked_to_verse,
+                    self.indexes.picked_to_verse,
                     Message::ToVersePicked
                 )
                 .placeholder("Verš"),
-                _ => pick_list(vec![], self.picked_to_chapter, Message::ToVersePicked)
-                    .placeholder("Vyber kapitolu"),
+                _ => pick_list(
+                    vec![],
+                    self.indexes.picked_to_chapter,
+                    Message::ToVersePicked
+                )
+                .placeholder("Vyber kapitolu"),
             }
             .width(Length::FillPortion(1)),
         ];
@@ -206,7 +222,7 @@ impl BiblePicker {
                 .width(Length::FillPortion(1))
                 .padding(30),
                 column![
-                    upper_picker,
+                    quick_picker,
                     detailed_picker,
                     passage_preview.height(200),
                     submit_button
@@ -254,6 +270,7 @@ impl BiblePicker {
             }
             Message::TranslationsLoaded(translations) => {
                 debug!("Překlady načteny {:#?}", translations);
+                picker.picked_translation = translations.first().cloned();
                 picker.translations = Some(translations);
                 Task::none()
             }
@@ -264,38 +281,38 @@ impl BiblePicker {
             }
             Message::FromBookPicked(book) => {
                 debug!("Vybrána kniha (od) {}", book);
-                picker.picked_from_book = Some(book);
-                picker.picked_from_chapter = None;
-                picker.picked_from_verse = None;
+                picker.indexes.picked_from_book = Some(book);
+                picker.indexes.picked_from_chapter = None;
+                picker.indexes.picked_from_verse = None;
                 Task::done(Message::SelectionChanged.into())
             }
             Message::FromChapterPicked(chapter) => {
                 debug!("Vybrána kapitola (od) {}", chapter);
-                picker.picked_from_chapter = Some(chapter);
-                picker.picked_from_verse = None;
+                picker.indexes.picked_from_chapter = Some(chapter);
+                picker.indexes.picked_from_verse = None;
                 Task::done(Message::SelectionChanged.into())
             }
             Message::FromVersePicked(verse) => {
                 debug!("Vybrán verš (od) {}", verse);
-                picker.picked_from_verse = Some(verse);
+                picker.indexes.picked_from_verse = Some(verse);
                 Task::done(Message::SelectionChanged.into())
             }
             Message::ToBookPicked(book) => {
                 debug!("Vybrána kniha (do) {}", book);
-                picker.picked_to_book = Some(book);
-                picker.picked_to_chapter = None;
-                picker.picked_to_verse = None;
+                picker.indexes.picked_to_book = Some(book);
+                picker.indexes.picked_to_chapter = None;
+                picker.indexes.picked_to_verse = None;
                 Task::done(Message::SelectionChanged.into())
             }
             Message::ToChapterPicked(chapter) => {
                 debug!("Vybrána kapitola (do) {}", chapter);
-                picker.picked_to_chapter = Some(chapter);
-                picker.picked_to_verse = None;
+                picker.indexes.picked_to_chapter = Some(chapter);
+                picker.indexes.picked_to_verse = None;
                 Task::done(Message::SelectionChanged.into())
             }
             Message::ToVersePicked(verse) => {
                 debug!("Vybrán verš (do) {}", verse);
-                picker.picked_to_verse = Some(verse);
+                picker.indexes.picked_to_verse = Some(verse);
                 Task::done(Message::SelectionChanged.into())
             }
             Message::ReturnToEditor => {
@@ -361,6 +378,21 @@ impl BiblePicker {
                 picker.preview = None;
                 Task::none()
             }
+            Message::QuickPickerContentChanged(input) => {
+                trace!("Změnil se obsah quick inputu: \"{input}\"");
+                picker.quick_picker_content = input;
+                let indexes = picker.parse_quick_selection();
+                if !indexes.is_empty() {
+                    trace!(
+                        "Quick input byl alespoň částečně zparsován, nastavuji výběr na {:#?}",
+                        indexes
+                    );
+                    picker.indexes = indexes;
+                    Task::done(Message::SelectionChanged.into())
+                } else {
+                    Task::none()
+                }
+            }
         }
     }
 
@@ -376,16 +408,16 @@ impl BiblePicker {
         }
 
         let from = VerseIndex::try_new(
-            self.picked_from_book.context(CONTEXT_MSG)?,
-            self.picked_from_chapter.context(CONTEXT_MSG)?,
-            self.picked_from_verse.context(CONTEXT_MSG)?,
+            self.indexes.picked_from_book.context(CONTEXT_MSG)?,
+            self.indexes.picked_from_chapter.context(CONTEXT_MSG)?,
+            self.indexes.picked_from_verse.context(CONTEXT_MSG)?,
         )
         .context("Neplatný začátek pasáže")?;
 
         let to = VerseIndex::try_new(
-            self.picked_to_book.context(CONTEXT_MSG)?,
-            self.picked_to_chapter.context(CONTEXT_MSG)?,
-            self.picked_to_verse.context(CONTEXT_MSG)?,
+            self.indexes.picked_to_book.context(CONTEXT_MSG)?,
+            self.indexes.picked_to_chapter.context(CONTEXT_MSG)?,
+            self.indexes.picked_to_verse.context(CONTEXT_MSG)?,
         )
         .context("Neplatný konec pasáže")?;
 
@@ -393,6 +425,193 @@ impl BiblePicker {
             Err(anyhow!("Začátek pasáže se nachází až za koncem"))
         } else {
             Ok((from, to))
+        }
+    }
+
+    /// Pokusí se zparsovat rychlý výběr a vrátí indexy pasáže.
+    ///
+    /// ### Co zparsuje
+    /// Očekává se vstup ve formátu `KNIHA KAPITOLA:VERŠ-[KNIHA] [KAPITOLA:]VERŠ`
+    /// (pokud není druhá kniha nebo kapitola uvedeny, bude použita první).
+    ///
+    /// - Parsování knih funguje podle [`Book::parse()`].
+    fn parse_quick_selection(&self) -> BiblePickerIndexes {
+        // Statická proměnná, která se inicializuje při prvním přístupu
+        // a poté do konce běhu programu nemění svou hodnotu.
+        // Regex totiž automaticky necachuje zkompilovaný regex
+        // a kompilace může být poměrně drahá.
+        static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r"^(?P<from_book>((\d\.)|\p{Letter}+)? *\p{Letter}+) *(?P<from_chapter>\d+) *: *(?P<from_verse>\d+) *(- *(?P<to_book>(\d\.)? *\p{Letter}+)? *((?P<to_chapter>\d+)? *:)? *(?P<to_verse>\d+))?$"
+            ).expect("Nelze zkompilovat regex")
+        });
+
+        match REGEX.captures(&self.quick_picker_content) {
+            Some(caps) => {
+                // Pokud se regex chytnul, všechny `from` musely matchnout, přítomnost těchto
+                // skupin je tedy unwrappnuta
+                let picked_from_book = caps.name("from_book").unwrap().as_str().parse().ok();
+                let picked_from_chapter = caps.name("from_chapter").unwrap().as_str().parse().ok();
+                let picked_from_verse = caps.name("from_verse").unwrap().as_str().parse().ok();
+
+                BiblePickerIndexes {
+                    picked_from_book,
+                    picked_from_chapter,
+                    picked_from_verse,
+                    // Index konce pasáže: Pokud v regexu není, použijeme ekvivalent z indexu
+                    // začátku (př. Jan 2:1-3 -> chybí kniha a kapitola -> použije se Jan 2)
+                    picked_to_book: caps
+                        .name("to_book")
+                        .map_or(picked_from_book, |m| m.as_str().parse().ok()),
+                    picked_to_chapter: caps
+                        .name("to_chapter")
+                        .map_or(picked_from_chapter, |m| m.as_str().parse().ok()),
+
+                    picked_to_verse: caps
+                        .name("to_verse")
+                        .map_or(picked_from_verse, |m| m.as_str().parse().ok()),
+                }
+            }
+            None => BiblePickerIndexes::new(),
+        }
+    }
+}
+
+/// Indexy od-do, všechno je zabalené v `Option<>`, protože jednotlivé části
+/// vybírá uživatel postupně.
+#[derive(Debug, PartialEq, Eq)]
+struct BiblePickerIndexes {
+    picked_from_book: Option<Book>,
+    picked_from_chapter: Option<u8>,
+    picked_from_verse: Option<u8>,
+    picked_to_book: Option<Book>,
+    picked_to_chapter: Option<u8>,
+    picked_to_verse: Option<u8>,
+}
+
+impl BiblePickerIndexes {
+    /// Vytvoří nový `BiblePickerIndexes`, který má vše nastavené na `None`.
+    fn new() -> Self {
+        Self {
+            picked_from_book: None,
+            picked_from_chapter: None,
+            picked_from_verse: None,
+            picked_to_book: None,
+            picked_to_chapter: None,
+            picked_to_verse: None,
+        }
+    }
+
+    /// Pokud jsou všechny položky `None`, vrátí `true`, jinak `false`.
+    fn is_empty(&self) -> bool {
+        if self.picked_from_book.is_none()
+            && self.picked_from_chapter.is_none()
+            && self.picked_from_verse.is_none()
+            && self.picked_to_book.is_none()
+            && self.picked_to_chapter.is_none()
+            && self.picked_to_verse.is_none()
+        {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn test_quick_input_parsing() {
+        let test_cases = vec![
+            (
+                "Jan 2:1-2",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::John),
+                    picked_from_chapter: Some(2),
+                    picked_from_verse: Some(1),
+                    picked_to_book: Some(Book::John),
+                    picked_to_chapter: Some(2),
+                    picked_to_verse: Some(2),
+                },
+            ),
+            (
+                "Jan  2:1 - 3",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::John),
+                    picked_from_chapter: Some(2),
+                    picked_from_verse: Some(1),
+                    picked_to_book: Some(Book::John),
+                    picked_to_chapter: Some(2),
+                    picked_to_verse: Some(3),
+                },
+            ),
+            (
+                "Matouš 3:1-3:5",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::Matthew),
+                    picked_from_chapter: Some(3),
+                    picked_from_verse: Some(1),
+                    picked_to_book: Some(Book::Matthew),
+                    picked_to_chapter: Some(3),
+                    picked_to_verse: Some(5),
+                },
+            ),
+            (
+                "Matouš 28:5-Marek 1:3",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::Matthew),
+                    picked_from_chapter: Some(28),
+                    picked_from_verse: Some(5),
+                    picked_to_book: Some(Book::Mark),
+                    picked_to_chapter: Some(1),
+                    picked_to_verse: Some(3),
+                },
+            ),
+            (
+                "1. Samuelova 3:2-23",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::Samuel1),
+                    picked_from_chapter: Some(3),
+                    picked_from_verse: Some(2),
+                    picked_to_book: Some(Book::Samuel1),
+                    picked_to_chapter: Some(3),
+                    picked_to_verse: Some(23),
+                },
+            ),
+            (
+                "žalm 1:3",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::Psalms),
+                    picked_from_chapter: Some(1),
+                    picked_from_verse: Some(3),
+                    picked_to_book: Some(Book::Psalms),
+                    picked_to_chapter: Some(1),
+                    picked_to_verse: Some(3),
+                },
+            ),
+            (
+                "píseň písní 1:3",
+                BiblePickerIndexes {
+                    picked_from_book: Some(Book::SongOfSolomon),
+                    picked_from_chapter: Some(1),
+                    picked_from_verse: Some(3),
+                    picked_to_book: Some(Book::SongOfSolomon),
+                    picked_to_chapter: Some(1),
+                    picked_to_verse: Some(3),
+                },
+            ),
+        ];
+
+        let mut picker = BiblePicker::new(PlaylistMetadata::new(""));
+
+        for (input, expected) in test_cases {
+            picker.quick_picker_content = String::from(input);
+            let result = picker.parse_quick_selection();
+            assert_eq!(result, expected);
         }
     }
 }
