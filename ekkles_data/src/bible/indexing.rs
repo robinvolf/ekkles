@@ -1581,6 +1581,57 @@ pub enum Book {
     Revelation = 65,
 }
 
+impl Book {
+    /// Pokusí se zparsovat knihu z dodaného řetězce `input`. Pokud nelze zparsovat,
+    /// vrátí `None`.
+    ///
+    /// ### Jak parsuje
+    /// - Snaží se najít knihu, jejíž string-reprezentace má nejdelší shodný prefix s `input`
+    /// - Pokud existuje jediná kniha se shodným prefixem, vrátí ji (kniha je jednoznačně určena)
+    /// - Je case-insensitive
+    ///
+    /// ### Příklad
+    /// ```rust
+    /// # use ekkles_data::bible::indexing::Book;
+    ///
+    /// assert_eq!(Book::parse("Jan"), Some(Book::John));
+    ///
+    /// // "Ma" může znamenat "Matouš" nebo "Malachiáš", není to jednoznačné
+    /// assert_eq!(Book::parse("Ma"), None);
+    ///
+    /// // Funguje case-insensitive
+    /// assert_eq!(Book::parse("ža"), Some(Book::Psalms));
+    /// ```
+    pub fn parse(input: &str) -> Option<Book> {
+        let input = input.to_lowercase();
+
+        let mut common_chars: Vec<(Book, usize)> = BIBLE_BOOKS
+            .iter()
+            .map(|book| {
+                let score = input
+                    .chars()
+                    .zip(book.to_string().to_lowercase().chars())
+                    .take_while(|(input_char, book_char)| input_char == book_char)
+                    .count();
+
+                (*book, score)
+            })
+            .collect();
+
+        common_chars.sort_unstable_by_key(|(_, score)| *score); // Nepotřebujeme zachovat pořadí položek se stejným klíčem, proto unstable (je rychlejší)
+        common_chars.reverse(); // `sort()` vrací od nejmenšího, my chceme na začátku nejvyšší skóre
+
+        // Pokud je první prvek větší než druhý, znamená, že vlastní jedinou nejdelší shodu
+        // se vstupem, vrátíme tedy příslušnou knihu, jinak nelze unikátně identifikovat
+        // knihu a vracíme None
+        if common_chars[0].1 > common_chars[1].1 {
+            Some(common_chars[0].0)
+        } else {
+            None
+        }
+    }
+}
+
 impl TryFrom<u8> for Book {
     type Error = anyhow::Error;
 
