@@ -12,7 +12,7 @@ use iced::{
     color,
     widget::{self, button, column, container, row, text, text_input},
 };
-use log::{debug, trace};
+use log::{debug, error, trace};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -46,6 +46,9 @@ pub enum Message {
     AddBiblePassage,
     AddSong,
     SelectItem(usize),
+    MoveItemUp(usize),
+    MoveItemDown(usize),
+    DeleteItem(usize),
 }
 
 impl From<Message> for crate::Message {
@@ -200,6 +203,34 @@ impl PlaylistEditor {
                 }
             });
 
+        let item_manipulation = match self.selected_index {
+            Some(index) => {
+                column![
+                    button("Posunout nahoru")
+                        .on_press_maybe(if index == 0 {
+                            None
+                        } else {
+                            Some(Message::MoveItemUp(index))
+                        })
+                        .width(Length::Fill),
+                    button("Posunout dolů")
+                        // len() - 1 je v pořádku, nikdy nepodteče, tento kód se provede pouze
+                        // s vybranou položkou, nelze mít vybranou položku na prázdném seznamu
+                        .on_press_maybe(if index == playlist.get_items().len() - 1 {
+                            None
+                        } else {
+                            Some(Message::MoveItemDown(index))
+                        })
+                        .width(Length::Fill),
+                    button("Smazat položku")
+                        .on_press(Message::DeleteItem(index))
+                        .style(button::danger)
+                        .width(Length::Fill),
+                ]
+            }
+            None => column([]),
+        };
+
         Into::<Element<Message>>::into(column![
             top_buttons(TopButtonsPickedSection::Playlists).map(|msg| msg.into()),
             container(row![
@@ -211,7 +242,8 @@ impl PlaylistEditor {
                             .width(Length::Fill),
                         row![
                             text_input("Název nového playlistu", &self.new_playlist_name)
-                                .on_input(Message::NewPlaylistNameChanged),
+                                .on_input(Message::NewPlaylistNameChanged)
+                                .on_submit(Message::SavePlaylistAsClicked),
                             button("Uložit jako").on_press(Message::SavePlaylistAsClicked)
                         ]
                         .width(Length::Fill),
@@ -248,9 +280,17 @@ impl PlaylistEditor {
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Center),
                 column(playlist_items)
+                    .padding(30)
                     .spacing(5)
                     .width(Length::FillPortion(2)),
-                column([]).width(Length::FillPortion(1))
+                if self.selected_index.is_some() {
+                    item_manipulation
+                } else {
+                    column([])
+                }
+                .width(Length::FillPortion(1))
+                .padding(30)
+                .spacing(10),
             ])
             .padding(10)
             .center_x(Length::FillPortion(1))
@@ -328,6 +368,7 @@ impl PlaylistEditor {
             }
             Message::PlaylistSavedSuccessfully => {
                 debug!("Playlist byl úspéšně uložen");
+                editor.new_playlist_name.clear();
                 editor.new_playlist_err_msg.clear();
                 Task::none()
             }
@@ -460,6 +501,47 @@ impl PlaylistEditor {
                 debug!("Vybrána položka playlistu {index}");
                 editor.selected_index = Some(index);
                 Task::none()
+            }
+            Message::MoveItemUp(index) => {
+                debug!("Posunuji položku na indexu {index} na {}", index - 1);
+                *editor
+                    .selected_index
+                    .as_mut()
+                    .expect("Při posunování vybrané položka musí být položka vybrána") -= 1;
+                let playlist = editor.playlist.clone();
+                Task::future(async move {
+                    let mut playlist = playlist.lock().await;
+                    playlist
+                        .swap_items(index, index - 1)
+                        .expect("Nelze posunout položku nahoru");
+                })
+                .discard()
+            }
+            Message::MoveItemDown(index) => {
+                debug!("Posunuji položku na indexu {index} na {}", index + 1);
+                *editor
+                    .selected_index
+                    .as_mut()
+                    .expect("Při posunování vybrané položka musí být položka vybrána") += 1;
+
+                let playlist = editor.playlist.clone();
+                Task::future(async move {
+                    let mut playlist = playlist.lock().await;
+                    playlist
+                        .swap_items(index, index + 1)
+                        .expect("Nelze posunout položku dolů");
+                })
+                .discard()
+            }
+            Message::DeleteItem(index) => {
+                debug!("Mažu položku s indexem {index}");
+                editor.selected_index = None;
+                let playlist = editor.playlist.clone();
+                Task::future(async move {
+                    let mut playlist = playlist.lock().await;
+                    playlist.delete_item(index).expect("Nelze smazat položku");
+                })
+                .discard()
             }
         }
     }
