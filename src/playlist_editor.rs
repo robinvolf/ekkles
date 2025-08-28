@@ -6,9 +6,11 @@ use ekkles_data::{
     playlist::{self, PlaylistMetadata, PlaylistMetadataStatus},
 };
 use iced::{
-    Color, Element, Length, Task,
+    Background, Border, Color, Element, Length, Task, Theme,
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, row, text, text_input},
+    border::Radius,
+    color,
+    widget::{self, button, column, container, row, text, text_input},
 };
 use log::{debug, trace};
 use tokio::sync::Mutex;
@@ -20,6 +22,9 @@ use crate::{
     pick_playlist::{self, PlaylistPicker},
     song_picker::SongPicker,
 };
+
+const SONG_COLOR: Color = color!(0x02a2f6);
+const PASSAGE_COLOR: Color = color!(0xfeaf4d);
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -40,6 +45,7 @@ pub enum Message {
     StartPresentation,
     AddBiblePassage,
     AddSong,
+    SelectItem(usize),
 }
 
 impl From<Message> for crate::Message {
@@ -65,6 +71,7 @@ pub struct PlaylistEditor {
     new_playlist_name: String,
     new_playlist_err_msg: String,
     song_name_cache: Option<Vec<(i64, String)>>,
+    selected_index: Option<usize>,
 }
 
 impl PlaylistEditor {
@@ -74,6 +81,7 @@ impl PlaylistEditor {
             new_playlist_name: String::new(),
             new_playlist_err_msg: String::new(),
             song_name_cache: None,
+            selected_index: None,
         }
     }
 
@@ -93,26 +101,104 @@ impl PlaylistEditor {
             playlist::PlaylistMetadataStatus::Dirty(_) => Some(Message::SavePlaylist),
         };
 
+        // TODO: Chtělo by to modularizovat tyhle closury na určování stylu položek playlistu
+        // Aktivní tlačítko je disabled, tudíž jeho status bude Disabled, naopak nevybraná
+        // položka bude Active, to používám ve stylovací funkci, abych věděl, jestli
+        // mám nastavit zvýraznění
+        let song_style = |_: &Theme, _| button::Style {
+            background: Some(Background::Color(SONG_COLOR)),
+            border: Border {
+                radius: Radius::new(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let song_selected_style = |_: &Theme, _| button::Style {
+            background: Some(Background::Color(SONG_COLOR)),
+            border: Border {
+                radius: Radius::new(0),
+                color: Color::BLACK,
+                width: 5.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let passage_style = |_: &Theme, _| button::Style {
+            background: Some(Background::Color(PASSAGE_COLOR)),
+            border: Border {
+                radius: Radius::new(0),
+                color: Color::BLACK,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let passage_selected_style = |_: &Theme, _| button::Style {
+            background: Some(Background::Color(PASSAGE_COLOR)),
+            border: Border {
+                radius: Radius::new(0),
+                color: Color::BLACK,
+                width: 5.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // TODO: Vyřešit blokující lock v GUI kódu, problém je, že `playlist_items`
+        // je iterátor a potřebuje, aby playlist byla validní reference, dokud nevrátíme
+        // zkonstruované GUI
         let playlist = self.playlist.blocking_lock();
 
-        let playlist_items = playlist.get_items().iter().map(|item| match item {
-            playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => {
-                button(text(format!("Pasáž {} - {}", from, to))).into()
-            }
-            playlist::PlaylistItemMetadata::Song(sought_id) => button(text(format!(
-                "Píseň {}",
-                self.song_name_cache
-                    .as_ref()
-                    .map(|cache| cache
-                        .iter()
-                        .find(|(id, _)| id == sought_id)
-                        .unwrap()
-                        .1
-                        .as_str())
-                    .unwrap_or("...")
-            )))
-            .into(),
-        });
+        let playlist_items = playlist
+            .get_items()
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let msg = if self
+                    .selected_index
+                    .is_some_and(|selected| selected == index)
+                {
+                    None
+                } else {
+                    Some(Message::SelectItem(index))
+                };
+
+                match item {
+                    playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => {
+                        button(text(format!("Pasáž {} - {}", from, to)))
+                            .style(if msg.is_none() {
+                                song_selected_style
+                            } else {
+                                song_style
+                            })
+                            .on_press_maybe(msg)
+                            .width(Length::Fill)
+                            .into()
+                    }
+                    playlist::PlaylistItemMetadata::Song(sought_id) => button(text(format!(
+                        "Píseň {}",
+                        self.song_name_cache
+                            .as_ref()
+                            .map(|cache| cache
+                                .iter()
+                                .find(|(id, _)| id == sought_id)
+                                .unwrap()
+                                .1
+                                .as_str())
+                            .unwrap_or("...")
+                    )))
+                    .style(if msg.is_none() {
+                        passage_selected_style
+                    } else {
+                        passage_style
+                    })
+                    .on_press_maybe(msg)
+                    .width(Length::Fill)
+                    .into(),
+                }
+            });
 
         Into::<Element<Message>>::into(column![
             top_buttons(TopButtonsPickedSection::Playlists).map(|msg| msg.into()),
@@ -161,7 +247,9 @@ impl PlaylistEditor {
                 ]
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Center),
-                column(playlist_items).width(Length::FillPortion(2)),
+                column(playlist_items)
+                    .spacing(5)
+                    .width(Length::FillPortion(2)),
                 column([]).width(Length::FillPortion(1))
             ])
             .padding(10)
@@ -366,6 +454,11 @@ impl PlaylistEditor {
             Message::SongNameCacheLoaded(items) => {
                 debug!("Načtena cache názvů písní");
                 editor.song_name_cache = Some(items);
+                Task::none()
+            }
+            Message::SelectItem(index) => {
+                debug!("Vybrána položka playlistu {index}");
+                editor.selected_index = Some(index);
                 Task::none()
             }
         }
