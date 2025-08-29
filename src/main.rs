@@ -11,6 +11,7 @@ mod config;
 mod error_screen;
 mod pick_playlist;
 mod playlist_editor;
+mod presenter;
 mod song_picker;
 mod update;
 

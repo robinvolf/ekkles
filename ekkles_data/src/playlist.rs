@@ -795,7 +795,7 @@ enum PlaylistMetadataDiff {
 
 #[derive(Debug)]
 /// Playlist se skládá z vícero druhů položek, tento enum je rozlišuje.
-enum PlaylistItem {
+pub enum PlaylistItem {
     BiblePassage(Passage),
     Song(Song),
 }
@@ -805,10 +805,10 @@ enum PlaylistItem {
 /// promítatelné slajdy.
 #[derive(Debug)]
 pub struct Playlist {
-    id: i64,
-    name: String,
-    created: DateTime<Utc>,
-    items: Vec<PlaylistItem>,
+    pub id: i64,
+    pub name: String,
+    pub created: DateTime<Utc>,
+    pub items: Vec<PlaylistItem>,
 }
 
 impl Playlist {
@@ -911,6 +911,10 @@ impl Playlist {
             created,
             items,
         })
+    }
+
+    pub fn into_items(self) -> Vec<PlaylistItem> {
+        self.items
     }
 }
 

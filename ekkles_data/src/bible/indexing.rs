@@ -177,6 +177,11 @@ impl Passage {
         (self.from, self.to)
     }
 
+    /// Vrátí název pasáže
+    pub fn get_translation_name(&self) -> &str {
+        &self.translation_name
+    }
+
     /// Zkontroluje, že rozsah pasáže je validní (první verš je v Bibli "dřív" než poslední)
     fn is_valid(&self) -> bool {
         if self.from > self.to { false } else { true }
