@@ -33,24 +33,14 @@ enum Screen {
     PickSong(song_picker::SongPicker),
     /// Vybírání biblické pasáže k zařazení do playlistu
     PickBible(bible_picker::BiblePicker),
+    /// Prezentování playlistu
+    Presenter(presenter::Presenter),
 }
 
 struct Ekkles {
     main_window_id: Id,
     db: SqlitePool,
     screen: Screen,
-}
-
-impl Screen {
-    fn view(&self) -> Element<Message> {
-        match self {
-            Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
-            Screen::ErrorOccurred(err) => error_screen::view(err),
-            Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
-            Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
-            Screen::PickBible(bible_picker) => bible_picker.view().map(|msg| msg.into()),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +59,8 @@ enum Message {
     SongPicker(song_picker::Message),
     /// Message z obrazovky "BiblePicker"
     BiblePicker(bible_picker::Message),
+    /// Message z obrazovky "Presenter"
+    Presenter(presenter::Message),
     /// Nastala nezotavitelná chyba, měli bychom ukončit program. (ukládat pouhou String
     /// reprezentaci je ošklivé, ale [`anyhow::Error`] neimplementuje [`Clone`]
     /// a [`Message`] musí být `Clone`)
@@ -101,8 +93,28 @@ impl Ekkles {
         iced::window::close_events().map(|id| Message::WindowClosed(id))
     }
 
-    fn view(&self, _window_id: Id) -> Element<Message> {
-        self.screen.view()
+    fn view(&self, window_id: Id) -> Element<Message> {
+        if window_id == self.main_window_id {
+            match &self.screen {
+                Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
+                Screen::ErrorOccurred(err) => error_screen::view(err),
+                Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
+                Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
+                Screen::PickBible(bible_picker) => bible_picker.view().map(|msg| msg.into()),
+                Screen::Presenter(presenter) => presenter.view_control().map(|msg| msg.into()),
+            }
+        } else if let Screen::Presenter(presenter) = &self.screen
+            && presenter
+                .get_presentation_window_id()
+                .is_some_and(|id| id == window_id)
+        {
+            presenter.view_presentation().map(|msg| msg.into())
+        } else {
+            panic!(
+                "Zavoláno view pro jiné než hlavní okno (id {window_id}) na obrazovce {:?}",
+                self.screen
+            );
+        }
     }
 
     fn title(&self, _window_id: Id) -> String {

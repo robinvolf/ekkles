@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use ekkles_data::{
     Song,
-    playlist::{self, PlaylistMetadata, PlaylistMetadataStatus},
+    playlist::{self, Playlist, PlaylistMetadata, PlaylistMetadataStatus},
 };
 use iced::{
     Background, Border, Color, Element, Length, Task, Theme,
@@ -20,6 +20,7 @@ use crate::{
     bible_picker::BiblePicker,
     components::{TopButtonsMessage, TopButtonsPickedSection, top_buttons},
     pick_playlist::{self, PlaylistPicker},
+    presenter::Presenter,
     song_picker::SongPicker,
 };
 
@@ -42,7 +43,8 @@ pub enum Message {
     DeletePlaylist,
     SaveAndExit,
     ReturnToPlaylistPicker,
-    StartPresentation,
+    LoadPresentation,
+    StartPresentation(Presenter),
     AddBiblePassage,
     AddSong,
     SelectItem(usize),
@@ -261,7 +263,7 @@ impl PlaylistEditor {
                             .on_press(Message::AddBiblePassage)
                             .width(Length::Fill),
                         button("Prezentovat")
-                            .on_press(Message::StartPresentation)
+                            .on_press(Message::LoadPresentation)
                             .width(Length::Fill)
                     ]
                     .width(Length::Fill)
@@ -313,9 +315,9 @@ impl PlaylistEditor {
                 let playlist = editor.playlist.clone();
                 Task::perform(
                     async move {
-                        let conn = conn.await.context("Nelze získat připojení k databázi")?;
+                        let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
                         let mut playlist = playlist.lock().await;
-                        playlist.save(conn).await
+                        playlist.save(&mut conn).await
                     },
                     |res| match res {
                         Ok(_) => Message::PlaylistSavedSuccessfully.into(),
@@ -340,8 +342,8 @@ impl PlaylistEditor {
                             &mut playlist,
                         );
 
-                        let conn = conn.await.context("Nelze získat připojení k databázi")?;
-                        playlist.save(conn).await
+                        let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                        playlist.save(&mut conn).await
                     },
                     |res| match res {
                         Ok(_) => Message::PlaylistSavedSuccessfully.into(),
@@ -349,7 +351,39 @@ impl PlaylistEditor {
                     },
                 )
             }
-            Message::StartPresentation => todo!(),
+            Message::LoadPresentation => {
+                debug!("Načítám prezentaci");
+                let conn = state.db.acquire();
+                let playlist = editor.playlist.clone();
+                Task::perform(
+                    async move {
+                        let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                        let mut playlist = playlist.lock().await;
+                        playlist
+                            .save(&mut conn)
+                            .await
+                            .context("Nelze uložit playlist")?;
+
+                        let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
+                            id
+                        } else {
+                            unreachable!() // Právě jsme uložili playlist, musí být ve stavu Clean
+                        };
+
+                        Presenter::try_new(id, &mut conn).await
+                    },
+                    |res| match res {
+                        Ok(presenter) => Message::StartPresentation(presenter).into(),
+                        Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                    },
+                )
+            }
+
+            Message::StartPresentation(presenter) => {
+                debug!("Přecházím na prezentační obrazovku");
+                state.screen = Screen::Presenter(presenter);
+                Task::done(crate::presenter::Message::OpenPresentationWindow.into())
+            }
             Message::AddBiblePassage => {
                 debug!("Přecházím na výběr playlistu");
                 let playlist = editor.playlist.blocking_lock().clone();
@@ -447,10 +481,10 @@ impl PlaylistEditor {
                         let playlist = editor.playlist.clone();
                         Task::perform(
                             async move {
-                                let conn =
+                                let mut conn =
                                     conn.await.context("Nelze získat připojení k databázi")?;
                                 let mut playlist = playlist.lock().await;
-                                playlist.save(conn).await
+                                playlist.save(&mut conn).await
                             },
                             |res| res,
                         )

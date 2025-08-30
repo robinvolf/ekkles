@@ -614,7 +614,7 @@ impl PlaylistMetadata {
 
     /// Uloží daný playlist do databáze a nastaví jeho status na [`PlaylistMetadataStatus::Clean`].
     /// Pokud je již status playlistu [`PlaylistMetadataStatus::Clean`], je tato metoda no-op.
-    pub async fn save(&mut self, conn: PoolConnection<Sqlite>) -> Result<()> {
+    pub async fn save(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
         match self.status {
             PlaylistMetadataStatus::Transient => {
                 let new_id = self.save_transient(conn).await?;
@@ -635,7 +635,7 @@ impl PlaylistMetadata {
     /// ### Integrita databáze
     /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
     /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
-    async fn save_dirty(&mut self, mut conn: PoolConnection<Sqlite>) -> Result<()> {
+    async fn save_dirty(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
         let id = if let PlaylistMetadataStatus::Dirty(id) = self.status {
             id
         } else {
@@ -688,7 +688,7 @@ impl PlaylistMetadata {
     /// ### Integrita databáze
     /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
     /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
-    async fn save_transient(&self, mut conn: PoolConnection<Sqlite>) -> Result<i64> {
+    async fn save_transient(&self, conn: &mut PoolConnection<Sqlite>) -> Result<i64> {
         assert_eq!(
             self.status,
             PlaylistMetadataStatus::Transient,
@@ -813,9 +813,9 @@ pub struct Playlist {
 
 impl Playlist {
     /// Načte playlist s daným ID z databáze.
-    pub async fn load(id: i64, mut conn: PoolConnection<Sqlite>) -> Result<Self> {
+    pub async fn load(id: i64, conn: &mut PoolConnection<Sqlite>) -> Result<Self> {
         let playlist_record = query!("SELECT id, name, created FROM playlists WHERE id = $1", id)
-            .fetch_one(&mut *conn)
+            .fetch_one(conn.as_mut())
             .await
             .with_context(|| format!("Playlist s id {id} nebyl nalezen"))?;
 
@@ -832,7 +832,7 @@ impl Playlist {
         let parts = query!(
             "SELECT part_order, kind FROM playlist_parts WHERE playlist_id = $1 ORDER BY part_order ASC",
             id
-        ).fetch_all(&mut *conn).await
+        ).fetch_all(conn.as_mut()).await
             .context("Nelze načíst další část playlistu z databáze")?
         ;
 
@@ -841,25 +841,25 @@ impl Playlist {
 
         for part_record in parts {
             match part_record.kind.as_str() {
-                DB_PLAYLIST_KIND_BIBLE_PASSAGE => {
+                DB_PLAYLIST_KIND_SONG => {
                     let song_id = query!(
                         "SELECT song_id FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
                         id,
                         part_record.part_order
-                    ).fetch_one(&mut *conn).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?.song_id;
+                    ).fetch_one(conn.as_mut()).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?.song_id;
 
-                    let song = Song::load_from_db(song_id, &mut conn)
+                    let song = Song::load_from_db(song_id, conn)
                         .await
                         .context("Nelze načíst píseň do playlistu")?;
 
                     items.push(PlaylistItem::Song(song));
                 }
-                DB_PLAYLIST_KIND_SONG => {
+                DB_PLAYLIST_KIND_BIBLE_PASSAGE => {
                     let passage_record = query!(
                         "SELECT translation_id , start_book_id , start_chapter , start_number , end_book_id , end_chapter , end_number FROM playlist_passages WHERE playlist_id = $1 AND part_order = $2",
                         id,
                         part_record.part_order
-                    ).fetch_one(&mut *conn).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?;
+                    ).fetch_one(conn.as_mut()).await.with_context(|| format!("Nelze načíst píseň do playlistu s id {} a pořadovým číslem {}", id, part_record.part_order))?;
 
                     let start = VerseIndex::try_new(
                         (passage_record.start_book_id as u8).try_into().unwrap(),
@@ -889,15 +889,14 @@ impl Playlist {
                         )
                     })?;
 
-                    let passage =
-                        Passage::load(start, end, passage_record.translation_id, &mut conn)
-                            .await
-                            .with_context(|| {
-                                format!(
-                                    "Nelze načíst pasáž od {:?} do {:?} v překladu {}",
-                                    start, end, passage_record.translation_id
-                                )
-                            })?;
+                    let passage = Passage::load(start, end, passage_record.translation_id, conn)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Nelze načíst pasáž od {:?} do {:?} v překladu {}",
+                                start, end, passage_record.translation_id
+                            )
+                        })?;
 
                     items.push(PlaylistItem::BiblePassage(passage));
                 }
