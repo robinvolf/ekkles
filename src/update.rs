@@ -20,13 +20,17 @@ impl Ekkles {
                     todo!("Jiná okna nejsou implementována")
                 }
             }
-            (Message::WindowClosed(id), _) => {
-                if id == self.main_window_id {
-                    debug!("Hlavní okno zavřeno, ukončuji aplikaci");
-                    iced::exit()
-                } else {
-                    todo!("Jiná okna nejsou implementována")
-                }
+            (Message::WindowClosed(id), _) if id == self.main_window_id => {
+                debug!("Hlavní okno zavřeno, ukončuji aplikaci");
+                iced::exit()
+            }
+            (Message::WindowClosed(id), Screen::Presenter(presenter))
+                if presenter
+                    .get_window_id()
+                    .is_some_and(|pres_id| id == pres_id) =>
+            {
+                debug!("Zavřeno okno prezentace");
+                Task::done(crate::presenter::Message::PresentationWindowClosed.into())
             }
             (Message::PlaylistPicker(msg), Screen::PickPlaylist(_)) => {
                 pick_playlist::update(self, msg)

@@ -3,29 +3,24 @@ use std::sync::Arc;
 use anyhow::Context;
 use ekkles_data::{
     Song,
-    playlist::{self, Playlist, PlaylistMetadata, PlaylistMetadataStatus},
+    playlist::{self, PlaylistMetadata, PlaylistMetadataStatus},
 };
 use iced::{
-    Background, Border, Color, Element, Length, Task, Theme,
+    Element, Length, Task,
     alignment::{Horizontal, Vertical},
-    border::Radius,
-    color,
-    widget::{self, button, column, container, row, text, text_input},
+    widget::{button, column, container, row, text, text_input},
 };
-use log::{debug, error, trace};
+use log::{debug, trace};
 use tokio::sync::Mutex;
 
 use crate::{
     Ekkles, Screen,
     bible_picker::BiblePicker,
-    components::{TopButtonsMessage, TopButtonsPickedSection, top_buttons},
+    components::{TopButtonsMessage, TopButtonsPickedSection, playlist_item_styles, top_buttons},
     pick_playlist::{self, PlaylistPicker},
     presenter::Presenter,
     song_picker::SongPicker,
 };
-
-const SONG_COLOR: Color = color!(0x02a2f6);
-const PASSAGE_COLOR: Color = color!(0xfeaf4d);
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -106,51 +101,6 @@ impl PlaylistEditor {
             playlist::PlaylistMetadataStatus::Dirty(_) => Some(Message::SavePlaylist),
         };
 
-        // TODO: Chtělo by to modularizovat tyhle closury na určování stylu položek playlistu
-        // Aktivní tlačítko je disabled, tudíž jeho status bude Disabled, naopak nevybraná
-        // položka bude Active, to používám ve stylovací funkci, abych věděl, jestli
-        // mám nastavit zvýraznění
-        let song_style = |_: &Theme, _| button::Style {
-            background: Some(Background::Color(SONG_COLOR)),
-            border: Border {
-                radius: Radius::new(0),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let song_selected_style = |_: &Theme, _| button::Style {
-            background: Some(Background::Color(SONG_COLOR)),
-            border: Border {
-                radius: Radius::new(0),
-                color: Color::BLACK,
-                width: 5.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let passage_style = |_: &Theme, _| button::Style {
-            background: Some(Background::Color(PASSAGE_COLOR)),
-            border: Border {
-                radius: Radius::new(0),
-                color: Color::BLACK,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let passage_selected_style = |_: &Theme, _| button::Style {
-            background: Some(Background::Color(PASSAGE_COLOR)),
-            border: Border {
-                radius: Radius::new(0),
-                color: Color::BLACK,
-                width: 5.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         // TODO: Vyřešit blokující lock v GUI kódu, problém je, že `playlist_items`
         // je iterátor a potřebuje, aby playlist byla validní reference, dokud nevrátíme
         // zkonstruované GUI
@@ -174,9 +124,9 @@ impl PlaylistEditor {
                     playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => {
                         button(text(format!("Pasáž {} - {}", from, to)))
                             .style(if msg.is_none() {
-                                song_selected_style
+                                playlist_item_styles::song_selected
                             } else {
-                                song_style
+                                playlist_item_styles::song
                             })
                             .on_press_maybe(msg)
                             .width(Length::Fill)
@@ -195,9 +145,9 @@ impl PlaylistEditor {
                             .unwrap_or("...")
                     )))
                     .style(if msg.is_none() {
-                        passage_selected_style
+                        playlist_item_styles::passage_selected
                     } else {
-                        passage_style
+                        playlist_item_styles::passage
                     })
                     .on_press_maybe(msg)
                     .width(Length::Fill)

@@ -3,6 +3,8 @@ use iced::{
     widget::{button, row},
 };
 
+pub mod playlist_item_styles;
+
 #[derive(Debug, Clone, Copy)]
 pub enum TopButtonsMessage {
     Playlists,
