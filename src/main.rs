@@ -116,10 +116,6 @@ impl Ekkles {
             );
         }
     }
-
-    fn title(&self, _window_id: Id) -> String {
-        String::from(PROGRAM_NAME)
-    }
 }
 
 fn main() -> iced::Result {
@@ -127,7 +123,8 @@ fn main() -> iced::Result {
     pretty_env_logger::init();
 
     // Hlavní event-loop
-    iced::daemon(Ekkles::title, Ekkles::update, Ekkles::view)
+    iced::daemon(Ekkles::new, Ekkles::update, Ekkles::view)
         .subscription(Ekkles::subscription)
-        .run_with(Ekkles::new)
+        .title(PROGRAM_NAME)
+        .run()
 }
