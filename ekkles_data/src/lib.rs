@@ -9,6 +9,7 @@ use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
 
 pub mod bible;
+pub mod database;
 pub mod playlist;
 pub mod song_db;
 pub mod song_xml;

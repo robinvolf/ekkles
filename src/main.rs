@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use config::Config;
 use iced::Element;
 use iced::window::{self, Id, Settings};
 use iced::{Subscription, Task};
+use log::info;
 use sqlx::SqlitePool;
 
 mod bible_picker;
@@ -68,7 +70,10 @@ enum Message {
 }
 
 impl Ekkles {
-    fn new() -> (Self, Task<Message>) {
+    fn boot() -> (Self, Task<Message>) {
+        let config = Config::new();
+        info!("Bootuji ekkles s následující konfigurací: {:#?}", config);
+
         let (id, open_window_task) = window::open(Settings::default());
 
         let async_rt = tokio::runtime::Builder::new_current_thread()
@@ -76,7 +81,9 @@ impl Ekkles {
             .build()
             .expect("Nelze sestrojit async runtime");
         let db = async_rt
-            .block_on(config::connect_db(PathBuf::from(DB_PATH)))
+            .block_on(ekkles_data::database::open_or_create_database(
+                config.db_path,
+            ))
             .expect("Nelze se připojit k databázi");
 
         (
@@ -134,7 +141,7 @@ fn main() -> iced::Result {
     pretty_env_logger::init();
 
     // Hlavní event-loop
-    iced::daemon(Ekkles::new, Ekkles::update, Ekkles::view)
+    iced::daemon(Ekkles::boot, Ekkles::update, Ekkles::view)
         .subscription(Ekkles::subscription)
         .title(PROGRAM_NAME)
         .run()
