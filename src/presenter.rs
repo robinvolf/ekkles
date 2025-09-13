@@ -20,7 +20,7 @@ const VERSES_PER_SLIDE: usize = 2;
 const TEXT_SIZE_MULTIPLIER_MIN: f32 = 0.5;
 const TEXT_SIZE_MULTIPLIER_MAX: f32 = 3.0;
 const TEXT_SIZE_MULTIPLIER_DEFAULT: f32 = 1.0;
-/// Jelikož [`iced::widget::slider`] potřebuje range a range přes f32 hodnoty se nechová dobře,
+/// Jelikož [`iced::widget::slider()`] potřebuje range a range přes f32 hodnoty se nechová dobře,
 /// používám pro range u8 (0..=255) a pomocí [`normalize_text_multiplier`] range poté
 /// normalizuji. Tato default hodnota by se měla promítnout do [`TEXT_SIZE_MULTIPLIER_DEFAULT`].
 const TEXT_SIZE_MULTIPLIER_DEFAULT_U8: u8 = ((TEXT_SIZE_MULTIPLIER_DEFAULT
@@ -162,7 +162,7 @@ pub enum PresentationMode {
 }
 
 /// Ruční implementace [`PartialEq`] a [`Eq`], aby se v případě [`PresentationMode::Frozen`]
-/// nekontrolovala shoda zabaleného indexu. Je to protože [`iced::widget::radio`] podle `Eq`
+/// nekontrolovala shoda zabaleného indexu. Je to protože [`iced::widget::radio()`] podle `Eq`
 /// rozeznává, zda-li je dané radio button zakliklé.
 impl PartialEq for PresentationMode {
     fn eq(&self, other: &Self) -> bool {
