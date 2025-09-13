@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use ekkles_data::playlist::{PlaylistItem, PlaylistMetadata};
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
 use iced::widget::button::danger;
-use iced::widget::{Text, button, column, container, row, scrollable, text};
+use iced::widget::{Space, Text, button, column, container, radio, row, scrollable, text};
 use iced::window::{Id, Settings};
 use iced::{Alignment, Color, Element, Length, Task, Theme};
 use log::debug;
@@ -115,12 +115,14 @@ impl SongSlide {
 }
 
 /// Aby bylo možné globálně změnit prezentaci (začernit, zmrazit)
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PresenterMode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentationMode {
     /// Normální prezentace
     Normal,
     /// Prázdný snímek
     Blank,
+    /// Obrazovka zmražena na snímku s daným indexem
+    Frozen(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +137,7 @@ pub enum Message {
     ClosePresentationWindow,
     /// Prezentační okno je zavřeno
     PresentationWindowClosed,
+    PressentationModeChanged(PresentationMode),
 }
 
 impl From<Message> for crate::Message {
@@ -152,7 +155,7 @@ pub struct Presenter {
     /// Index aktuálně prezentované položky
     current_presented_index: usize,
     /// Režim prezentace
-    mode: PresenterMode,
+    mode: PresentationMode,
 }
 
 /// Přetvoří `playlist` na vektor slajdů složený z položek vytvořených z jednotlivých
@@ -219,7 +222,7 @@ impl Presenter {
             Ok(Presenter {
                 playlist_slides: playlist_to_slides(playlist, VERSES_PER_SLIDE),
                 current_presented_index: 0,
-                mode: PresenterMode::Normal,
+                mode: PresentationMode::Normal,
                 presentation_window_id: None,
             })
         }
@@ -284,32 +287,69 @@ impl Presenter {
         let bottom_selected =
             self.playlist_slides.get(self.current_presented_index) == self.playlist_slides.last();
 
+        let control_buttons = column![
+            button("Nahoru")
+                .width(Length::Fill)
+                .on_press_maybe(if top_selected {
+                    None
+                } else {
+                    Some(Message::SelectSlide(self.current_presented_index - 1))
+                }),
+            button("Dolů")
+                .width(Length::Fill)
+                .on_press_maybe(if bottom_selected {
+                    None
+                } else {
+                    Some(Message::SelectSlide(self.current_presented_index + 1))
+                }),
+            Space::with_height(Length::Fixed(30.0)),
+            row![
+                radio(
+                    "Normál",
+                    PresentationMode::Normal,
+                    if let PresentationMode::Normal = self.mode {
+                        Some(PresentationMode::Normal)
+                    } else {
+                        None
+                    },
+                    Message::PressentationModeChanged
+                ),
+                radio(
+                    "Prázdný snímek",
+                    PresentationMode::Blank,
+                    if let PresentationMode::Blank = self.mode {
+                        Some(PresentationMode::Blank)
+                    } else {
+                        None
+                    },
+                    Message::PressentationModeChanged
+                ),
+                radio(
+                    "Zmrazit",
+                    PresentationMode::Frozen(self.current_presented_index),
+                    if let PresentationMode::Frozen(index) = self.mode {
+                        Some(PresentationMode::Frozen(index))
+                    } else {
+                        None
+                    },
+                    Message::PressentationModeChanged
+                ),
+            ]
+            .spacing(10),
+            Space::with_height(Length::Fixed(30.0)),
+            button("Ukončit prezentaci")
+                .width(Length::Fill)
+                .style(danger)
+                .on_press(Message::ClosePresentationWindow),
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .width(Length::FillPortion(1))
+        .padding(30);
+
         Into::<Element<Message>>::into(container(
             row![
-                column![
-                    button("Nahoru")
-                        .width(Length::Fill)
-                        .on_press_maybe(if top_selected {
-                            None
-                        } else {
-                            Some(Message::SelectSlide(self.current_presented_index - 1))
-                        }),
-                    button("Dolů")
-                        .width(Length::Fill)
-                        .on_press_maybe(if bottom_selected {
-                            None
-                        } else {
-                            Some(Message::SelectSlide(self.current_presented_index + 1))
-                        }),
-                    button("Ukončit prezentaci")
-                        .width(Length::Fill)
-                        .style(danger)
-                        .on_press(Message::ClosePresentationWindow),
-                ]
-                .spacing(10)
-                .height(Length::Fill)
-                .width(Length::FillPortion(1))
-                .padding(30),
+                control_buttons,
                 scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
                     .width(Length::FillPortion(2))
                     .height(Length::Fill),
@@ -323,7 +363,13 @@ impl Presenter {
 
     /// Zkonstruuuje GUI pro prezentační okno
     pub fn view_presentation(&self) -> Element<Message> {
-        self.playlist_slides[self.current_presented_index].present()
+        match self.mode {
+            PresentationMode::Normal => {
+                self.playlist_slides[self.current_presented_index].present()
+            }
+            PresentationMode::Blank => blank_slide(),
+            PresentationMode::Frozen(frozen_index) => self.playlist_slides[frozen_index].present(),
+        }
     }
 
     pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
@@ -362,10 +408,23 @@ impl Presenter {
                 presenter.presentation_window_id = Some(id);
                 Task::none()
             }
+            Message::PressentationModeChanged(presentation_mode) => {
+                debug!("Nastavuji prezentační režim na {:?}", presentation_mode);
+                presenter.mode = presentation_mode;
+                Task::none()
+            }
         }
     }
 }
 
+/// Vytvoří prázdný slide
+fn blank_slide() -> Element<'static, Message> {
+    container(Space::new(Length::Fill, Length::Fill))
+        .style(black_background)
+        .into()
+}
+
+/// Stylovací funkce pro pozadí slajdu
 fn black_background(_theme: &Theme) -> container::Style {
     container::Style {
         text_color: Some(Color::WHITE),
