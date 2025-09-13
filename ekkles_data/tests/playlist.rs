@@ -25,7 +25,10 @@ async fn save_empty() {
 
     assert_eq!(playlist.get_status(), PlaylistMetadataStatus::Transient);
 
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     assert!(matches!(
         playlist.get_status(),
@@ -61,7 +64,10 @@ async fn save_modified() {
 
     assert_eq!(playlist.get_status(), PlaylistMetadataStatus::Transient);
 
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
         let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
@@ -99,7 +105,10 @@ async fn delete_playlist() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
         id
@@ -161,7 +170,10 @@ async fn delete_item() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
         id
@@ -173,7 +185,10 @@ async fn delete_item() {
     playlist.delete_item(0).unwrap();
 
     // Uložíme bez písně
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
         .await
@@ -224,7 +239,10 @@ async fn swap_items() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
         id
@@ -236,7 +254,10 @@ async fn swap_items() {
     playlist.swap_items(0, 1).unwrap();
 
     // Uložíme po prohození
-    playlist.save(pool.acquire().await.unwrap()).await.unwrap();
+    playlist
+        .save(&mut pool.acquire().await.unwrap())
+        .await
+        .unwrap();
 
     let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
         .await
