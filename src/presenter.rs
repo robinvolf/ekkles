@@ -513,7 +513,10 @@ impl Presenter {
             }
             Message::OpenPresentationWindow => {
                 debug!("Otevírám prezentační okno");
-                let (id, task) = iced::window::open(Settings::default());
+                let (id, task) = iced::window::open(Settings {
+                    fullscreen: true,
+                    ..Settings::default()
+                });
                 presenter.presentation_window_id = Some(id);
                 task.map(|id| Message::PresentationWindowOpened(id).into())
             }
