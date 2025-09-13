@@ -90,7 +90,18 @@ impl Ekkles {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::window::close_events().map(|id| Message::WindowClosed(id))
+        let window_closed_events = iced::window::close_events().map(|id| Message::WindowClosed(id));
+
+        let screen_specific_events = match &self.screen {
+            Screen::PickPlaylist(_) => Subscription::none(),
+            Screen::ErrorOccurred(_) => Subscription::none(),
+            Screen::EditPlaylist(_) => Subscription::none(),
+            Screen::PickSong(_) => Subscription::none(),
+            Screen::PickBible(_) => Subscription::none(),
+            Screen::Presenter(presenter) => presenter.subscription(),
+        };
+
+        Subscription::batch([window_closed_events, screen_specific_events])
     }
 
     fn view(&self, window_id: Id) -> Element<Message> {

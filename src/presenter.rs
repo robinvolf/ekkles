@@ -1,11 +1,12 @@
 use anyhow::{Context, Result, anyhow};
 use ekkles_data::playlist::PlaylistItem;
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
+use iced::keyboard::{Key, key};
 use iced::widget::button::danger;
 use iced::widget::{Space, button, column, container, radio, row, scrollable, slider, text};
 use iced::window::{Id, Settings};
-use iced::{Alignment, Color, Element, Length, Task, Theme};
-use log::debug;
+use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
+use log::{debug, trace};
 use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
 
@@ -31,6 +32,11 @@ const TEXT_SIZE_MULTIPLIER_DEFAULT_U8: u8 = ((TEXT_SIZE_MULTIPLIER_DEFAULT
 const MAIN_TEXT_SIZE: f32 = 70.0;
 /// Velikost textu pro doplňující obsah snímku
 const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
+
+// Poznámka: Musí to být malé písmena, jinak se nematchnou na keycode v subscription()
+const MODE_FREEZE_KEY: &str = "f";
+const MODE_NORMAL_KEY: &str = "n";
+const MODE_BLANK_KEY: &str = "b";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Slide {
@@ -84,15 +90,12 @@ impl PassageSlide {
 
         let indexes_text = format!("{} - {}", self.passage_indexes.0, self.passage_indexes.1);
 
-        let verses = container(text(verses_text).size(verses_text_size))
-            .center(Length::Fill)
-            .padding(30);
+        let verses = container(text(verses_text).size(verses_text_size)).center(Length::Fill);
         let indexes = container(
             text(indexes_text)
                 .align_x(Alignment::Center)
                 .size(indexes_text_size),
         )
-        .padding(30)
         .center_x(Length::Fill)
         .align_bottom(Length::Shrink);
 
@@ -131,8 +134,7 @@ impl SongSlide {
                 .align_x(Alignment::Center)
                 .size(content_size),
         )
-        .center(Length::Fill)
-        .padding(30);
+        .center(Length::Fill);
 
         let title = container(
             text(&self.title)
@@ -140,8 +142,7 @@ impl SongSlide {
                 .size(title_size),
         )
         .center_x(Length::Fill)
-        .align_bottom(Length::Shrink)
-        .padding(30);
+        .align_bottom(Length::Shrink);
 
         container(column![content, title])
             .style(black_background)
@@ -181,6 +182,10 @@ pub enum Message {
     OpenPresentationWindow,
     /// Prezentační okno bylo otevřeno pod daným ID
     PresentationWindowOpened(Id),
+    /// Požaduje přepnutí prezentace na předchozí slajd
+    RequestPrevSlide,
+    /// Požaduje přepnutí prezentace na následující slajd
+    RequestNextSlide,
     /// Přepne prezentaci na slajd s daným indexem
     SelectSlide(usize),
     /// Zavře prezentační okno
@@ -188,7 +193,10 @@ pub enum Message {
     /// Prezentační okno je zavřeno
     PresentationWindowClosed,
     /// Změna módu prezentace
-    PressentationModeChanged(PresentationMode),
+    PresentationModeChanged(PresentationMode),
+    /// Zmrazit prezentaci, stejné jako PresentationModeChanged(PresentationMode::Frozen(_)),
+    /// ale bez specifikace indexu. Nutné pro zamražení ze subscription.
+    FreezePresentation,
     /// Změna multiplikátoru velikosti textu na snímku
     TextSizeMultiplierChanged(u8),
 }
@@ -286,8 +294,42 @@ impl Presenter {
         }
     }
 
+    /// Vrátí odebírané subscriptions pro obrazovku Prezentér. Odebíráme vstupy od klávesnice.
+    ///
+    /// # Klávesy
+    /// - Šipky ↑↓ pro posouvání právě promítané položky
+    /// - Escape pro ukončení prezentace
+    pub fn subscription(&self) -> Subscription<crate::Message> {
+        iced::keyboard::on_key_press(|key, modifiers| {
+            trace!("Přišel event z klávesnice: {:?}", (key.clone(), modifiers));
+            match (key.as_ref(), modifiers) {
+                (Key::Named(key::Named::ArrowUp), _) => Some(Message::RequestPrevSlide.into()),
+                (Key::Named(key::Named::ArrowDown), _) => Some(Message::RequestNextSlide.into()),
+                (Key::Named(key::Named::Escape), _) => {
+                    Some(Message::ClosePresentationWindow.into())
+                }
+                (Key::Character(MODE_FREEZE_KEY), _) => Some(Message::FreezePresentation.into()),
+                (Key::Character(MODE_NORMAL_KEY), _) => {
+                    Some(Message::PresentationModeChanged(PresentationMode::Normal).into())
+                }
+                (Key::Character(MODE_BLANK_KEY), _) => {
+                    Some(Message::PresentationModeChanged(PresentationMode::Blank).into())
+                }
+                _ => None,
+            }
+        })
+    }
+
     pub fn get_presentation_window_id(&self) -> Option<Id> {
         self.presentation_window_id
+    }
+
+    fn is_first_slide_selected(&self) -> bool {
+        self.current_presented_index == 0
+    }
+
+    fn is_last_slide_selected(&self) -> bool {
+        self.playlist_slides.get(self.current_presented_index) == self.playlist_slides.last()
     }
 
     /// Zkonstruuje GUI pro ovládací okno
@@ -341,9 +383,8 @@ impl Presenter {
                     }
                 });
 
-        let top_selected = self.current_presented_index == 0;
-        let bottom_selected =
-            self.playlist_slides.get(self.current_presented_index) == self.playlist_slides.last();
+        let top_selected = self.is_first_slide_selected();
+        let bottom_selected = self.is_last_slide_selected();
 
         let reset_text_size_button_msg = if self.text_scale == TEXT_SIZE_MULTIPLIER_DEFAULT_U8 {
             None
@@ -355,22 +396,22 @@ impl Presenter {
 
         let style_control = column![
             radio(
-                "Normál",
+                String::from("Normál (") + MODE_NORMAL_KEY + ")",
                 PresentationMode::Normal,
                 Some(self.mode),
-                Message::PressentationModeChanged
+                Message::PresentationModeChanged
             ),
             radio(
-                "Prázdný snímek",
+                String::from("Prázdný snímek (") + MODE_BLANK_KEY + ")",
                 PresentationMode::Blank,
                 Some(self.mode),
-                Message::PressentationModeChanged
+                Message::PresentationModeChanged
             ),
             radio(
-                "Zmrazit",
+                String::from("Zmrazit (") + MODE_FREEZE_KEY + ")",
                 PresentationMode::Frozen(self.current_presented_index),
                 Some(self.mode),
-                Message::PressentationModeChanged
+                Message::PresentationModeChanged
             ),
             Space::with_height(Length::Fixed(30.0)),
             text("Škálování velikosti textu"),
@@ -394,17 +435,17 @@ impl Presenter {
                 .on_press_maybe(if top_selected {
                     None
                 } else {
-                    Some(Message::SelectSlide(self.current_presented_index - 1))
+                    Some(Message::RequestPrevSlide)
                 }),
             button("Dolů")
                 .width(Length::Fill)
                 .on_press_maybe(if bottom_selected {
                     None
                 } else {
-                    Some(Message::SelectSlide(self.current_presented_index + 1))
+                    Some(Message::RequestNextSlide)
                 }),
             Space::with_height(Length::Fixed(30.0)),
-            button("Ukončit prezentaci")
+            button("Ukončit prezentaci (ESC)")
                 .width(Length::Fill)
                 .style(danger)
                 .on_press(Message::ClosePresentationWindow),
@@ -481,7 +522,7 @@ impl Presenter {
                 presenter.presentation_window_id = Some(id);
                 Task::none()
             }
-            Message::PressentationModeChanged(presentation_mode) => {
+            Message::PresentationModeChanged(presentation_mode) => {
                 debug!("Nastavuji prezentační režim na {:?}", presentation_mode);
                 presenter.mode = presentation_mode;
                 Task::none()
@@ -490,6 +531,32 @@ impl Presenter {
                 debug!("Nastavuji multiplikátor velikosti textu na {multiplier}");
                 presenter.text_scale = multiplier;
                 Task::none()
+            }
+            Message::RequestPrevSlide => {
+                debug!("Požadavek k přechodu na předchozí slajd");
+                if presenter.is_first_slide_selected() {
+                    Task::none()
+                } else {
+                    let new_slide_index = presenter.current_presented_index - 1;
+                    Task::done(Message::SelectSlide(new_slide_index).into())
+                }
+            }
+            Message::RequestNextSlide => {
+                debug!("Požadavek k přechodu na následující slajd");
+                if presenter.is_last_slide_selected() {
+                    Task::none()
+                } else {
+                    let new_slide_index = presenter.current_presented_index + 1;
+                    Task::done(Message::SelectSlide(new_slide_index).into())
+                }
+            }
+            Message::FreezePresentation => {
+                let current_index = presenter.current_presented_index;
+                debug!("Zamražuji prezentaci na indexu {current_index}");
+                Task::done(
+                    Message::PresentationModeChanged(PresentationMode::Frozen(current_index))
+                        .into(),
+                )
             }
         }
     }
