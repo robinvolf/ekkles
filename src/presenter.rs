@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, anyhow};
-use ekkles_data::playlist::{PlaylistItem, PlaylistMetadata};
+use ekkles_data::playlist::PlaylistItem;
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
 use iced::widget::button::danger;
-use iced::widget::{Space, Text, button, column, container, radio, row, scrollable, text};
+use iced::widget::{Space, button, column, container, radio, row, scrollable, slider, text};
 use iced::window::{Id, Settings};
 use iced::{Alignment, Color, Element, Length, Task, Theme};
 use log::debug;
@@ -16,6 +16,22 @@ use crate::{Ekkles, Screen};
 /// Počet veršů na jeden slajd, proteď konstanta
 const VERSES_PER_SLIDE: usize = 2;
 
+const TEXT_SIZE_MULTIPLIER_MIN: f32 = 0.5;
+const TEXT_SIZE_MULTIPLIER_MAX: f32 = 3.0;
+const TEXT_SIZE_MULTIPLIER_DEFAULT: f32 = 1.0;
+/// Jelikož [`iced::widget::slider`] potřebuje range a range přes f32 hodnoty se nechová dobře,
+/// používám pro range u8 (0..=255) a pomocí [`normalize_text_multiplier`] range poté
+/// normalizuji. Tato default hodnota by se měla promítnout do [`TEXT_SIZE_MULTIPLIER_DEFAULT`].
+const TEXT_SIZE_MULTIPLIER_DEFAULT_U8: u8 = ((TEXT_SIZE_MULTIPLIER_DEFAULT
+    - TEXT_SIZE_MULTIPLIER_MIN)
+    / (TEXT_SIZE_MULTIPLIER_MAX - TEXT_SIZE_MULTIPLIER_MIN)
+    * u8::MAX as f32) as u8;
+
+/// Velikost textu pro hlavní obsah snímku
+const MAIN_TEXT_SIZE: f32 = 70.0;
+/// Velikost textu pro doplňující obsah snímku
+const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Slide {
     Passage(PassageSlide),
@@ -23,10 +39,10 @@ enum Slide {
 }
 
 impl Slide {
-    fn present(&self) -> Element<Message> {
+    fn present(&self, text_size_multiplier: f32) -> Element<Message> {
         match self {
-            Slide::Passage(passage_slide) => passage_slide.present(),
-            Slide::Song(song_slide) => song_slide.present(),
+            Slide::Passage(passage_slide) => passage_slide.present(text_size_multiplier),
+            Slide::Song(song_slide) => song_slide.present(text_size_multiplier),
         }
     }
 }
@@ -56,7 +72,10 @@ impl PassageSlide {
         }
     }
 
-    fn present(&self) -> Element<Message> {
+    fn present(&self, text_size_multiplier: f32) -> Element<Message> {
+        let verses_text_size = MAIN_TEXT_SIZE * text_size_multiplier;
+        let indexes_text_size = ADDITIONAL_TEXT_SIZE * text_size_multiplier;
+
         let verses_text: String = self
             .verses
             .iter()
@@ -65,13 +84,17 @@ impl PassageSlide {
 
         let indexes_text = format!("{} - {}", self.passage_indexes.0, self.passage_indexes.1);
 
-        let verses = container(text(verses_text).size(50))
+        let verses = container(text(verses_text).size(verses_text_size))
             .center(Length::Fill)
             .padding(30);
-        let indexes = container(text(indexes_text).align_x(Alignment::Center).size(30))
-            .padding(30)
-            .center_x(Length::Fill)
-            .align_bottom(Length::Shrink);
+        let indexes = container(
+            text(indexes_text)
+                .align_x(Alignment::Center)
+                .size(indexes_text_size),
+        )
+        .padding(30)
+        .center_x(Length::Fill)
+        .align_bottom(Length::Shrink);
 
         container(column![verses, indexes])
             .style(black_background)
@@ -99,14 +122,26 @@ impl SongSlide {
         }
     }
 
-    fn present(&self) -> Element<Message> {
-        let content = container(text(&self.content).align_x(Alignment::Center).size(50))
-            .center(Length::Fill)
-            .padding(30);
-        let title = container(text(&self.title).align_x(Alignment::Center).size(30))
-            .center_x(Length::Fill)
-            .align_bottom(Length::Shrink)
-            .padding(30);
+    fn present(&self, text_size_multiplier: f32) -> Element<Message> {
+        let content_size = MAIN_TEXT_SIZE * text_size_multiplier;
+        let title_size = ADDITIONAL_TEXT_SIZE * text_size_multiplier;
+
+        let content = container(
+            text(&self.content)
+                .align_x(Alignment::Center)
+                .size(content_size),
+        )
+        .center(Length::Fill)
+        .padding(30);
+
+        let title = container(
+            text(&self.title)
+                .align_x(Alignment::Center)
+                .size(title_size),
+        )
+        .center_x(Length::Fill)
+        .align_bottom(Length::Shrink)
+        .padding(30);
 
         container(column![content, title])
             .style(black_background)
@@ -115,8 +150,8 @@ impl SongSlide {
 }
 
 /// Aby bylo možné globálně změnit prezentaci (začernit, zmrazit)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PresentationMode {
+#[derive(Debug, Clone, Copy)]
+pub enum PresentationMode {
     /// Normální prezentace
     Normal,
     /// Prázdný snímek
@@ -124,6 +159,21 @@ enum PresentationMode {
     /// Obrazovka zmražena na snímku s daným indexem
     Frozen(usize),
 }
+
+/// Ruční implementace [`PartialEq`] a [`Eq`], aby se v případě [`PresentationMode::Frozen`]
+/// nekontrolovala shoda zabaleného indexu. Je to protože [`iced::widget::radio`] podle `Eq`
+/// rozeznává, zda-li je dané radio button zakliklé.
+impl PartialEq for PresentationMode {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PresentationMode::Normal, PresentationMode::Normal) => true,
+            (PresentationMode::Blank, PresentationMode::Blank) => true,
+            (PresentationMode::Frozen(_), PresentationMode::Frozen(_)) => true,
+            _ => false,
+        }
+    }
+}
+impl Eq for PresentationMode {}
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -137,7 +187,10 @@ pub enum Message {
     ClosePresentationWindow,
     /// Prezentační okno je zavřeno
     PresentationWindowClosed,
+    /// Změna módu prezentace
     PressentationModeChanged(PresentationMode),
+    /// Změna multiplikátoru velikosti textu na snímku
+    TextSizeMultiplierChanged(u8),
 }
 
 impl From<Message> for crate::Message {
@@ -146,7 +199,7 @@ impl From<Message> for crate::Message {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Presenter {
     /// Id okna s prezentací
     presentation_window_id: Option<Id>,
@@ -156,6 +209,10 @@ pub struct Presenter {
     current_presented_index: usize,
     /// Režim prezentace
     mode: PresentationMode,
+    /// Multiplikátor velikost textu na snímku, při použití se normalizuje do
+    /// intervalu `[TEXT_SIZE_MULTIPLIER_MIN]` až [`TEXT_SIZE_MULTIPLIER_MAX`].
+    /// Vysvětlení viz: [`TEXT_SIZE_MULTIPLIER_DEFAULT_U8`].
+    text_scale: u8,
 }
 
 /// Přetvoří `playlist` na vektor slajdů složený z položek vytvořených z jednotlivých
@@ -224,6 +281,7 @@ impl Presenter {
                 current_presented_index: 0,
                 mode: PresentationMode::Normal,
                 presentation_window_id: None,
+                text_scale: TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
             })
         }
     }
@@ -287,7 +345,50 @@ impl Presenter {
         let bottom_selected =
             self.playlist_slides.get(self.current_presented_index) == self.playlist_slides.last();
 
-        let control_buttons = column![
+        let reset_text_size_button_msg = if self.text_scale == TEXT_SIZE_MULTIPLIER_DEFAULT_U8 {
+            None
+        } else {
+            Some(Message::TextSizeMultiplierChanged(
+                TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
+            ))
+        };
+
+        let style_control = column![
+            radio(
+                "Normál",
+                PresentationMode::Normal,
+                Some(self.mode),
+                Message::PressentationModeChanged
+            ),
+            radio(
+                "Prázdný snímek",
+                PresentationMode::Blank,
+                Some(self.mode),
+                Message::PressentationModeChanged
+            ),
+            radio(
+                "Zmrazit",
+                PresentationMode::Frozen(self.current_presented_index),
+                Some(self.mode),
+                Message::PressentationModeChanged
+            ),
+            Space::with_height(Length::Fixed(30.0)),
+            text("Škálování velikosti textu"),
+            row![
+                slider(
+                    u8::MIN..=u8::MAX,
+                    self.text_scale,
+                    Message::TextSizeMultiplierChanged
+                ),
+                button("Resetovat").on_press_maybe(reset_text_size_button_msg)
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center)
+        ]
+        .spacing(10)
+        .padding(30);
+
+        let presentation_control = column![
             button("Nahoru")
                 .width(Length::Fill)
                 .on_press_maybe(if top_selected {
@@ -303,57 +404,25 @@ impl Presenter {
                     Some(Message::SelectSlide(self.current_presented_index + 1))
                 }),
             Space::with_height(Length::Fixed(30.0)),
-            row![
-                radio(
-                    "Normál",
-                    PresentationMode::Normal,
-                    if let PresentationMode::Normal = self.mode {
-                        Some(PresentationMode::Normal)
-                    } else {
-                        None
-                    },
-                    Message::PressentationModeChanged
-                ),
-                radio(
-                    "Prázdný snímek",
-                    PresentationMode::Blank,
-                    if let PresentationMode::Blank = self.mode {
-                        Some(PresentationMode::Blank)
-                    } else {
-                        None
-                    },
-                    Message::PressentationModeChanged
-                ),
-                radio(
-                    "Zmrazit",
-                    PresentationMode::Frozen(self.current_presented_index),
-                    if let PresentationMode::Frozen(index) = self.mode {
-                        Some(PresentationMode::Frozen(index))
-                    } else {
-                        None
-                    },
-                    Message::PressentationModeChanged
-                ),
-            ]
-            .spacing(10),
-            Space::with_height(Length::Fixed(30.0)),
             button("Ukončit prezentaci")
                 .width(Length::Fill)
                 .style(danger)
                 .on_press(Message::ClosePresentationWindow),
         ]
         .spacing(10)
-        .height(Length::Fill)
-        .width(Length::FillPortion(1))
         .padding(30);
 
         Into::<Element<Message>>::into(container(
             row![
-                control_buttons,
+                presentation_control
+                    .width(Length::FillPortion(1))
+                    .height(Length::Fill),
                 scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
                     .width(Length::FillPortion(2))
                     .height(Length::Fill),
-                column([]).width(Length::FillPortion(1))
+                style_control
+                    .width(Length::FillPortion(1))
+                    .height(Length::Fill)
             ]
             .padding(10)
             .height(Length::Fill)
@@ -363,12 +432,16 @@ impl Presenter {
 
     /// Zkonstruuuje GUI pro prezentační okno
     pub fn view_presentation(&self) -> Element<Message> {
+        let text_size_multiplier = normalize_text_multiplier(self.text_scale);
+
         match self.mode {
             PresentationMode::Normal => {
-                self.playlist_slides[self.current_presented_index].present()
+                self.playlist_slides[self.current_presented_index].present(text_size_multiplier)
             }
             PresentationMode::Blank => blank_slide(),
-            PresentationMode::Frozen(frozen_index) => self.playlist_slides[frozen_index].present(),
+            PresentationMode::Frozen(frozen_index) => {
+                self.playlist_slides[frozen_index].present(text_size_multiplier)
+            }
         }
     }
 
@@ -413,8 +486,31 @@ impl Presenter {
                 presenter.mode = presentation_mode;
                 Task::none()
             }
+            Message::TextSizeMultiplierChanged(multiplier) => {
+                debug!("Nastavuji multiplikátor velikosti textu na {multiplier}");
+                presenter.text_scale = multiplier;
+                Task::none()
+            }
         }
     }
+}
+
+/// Normalizuje pomocí lineární transformace multiplikátor textu o hodnotě `value` tak,
+/// aby platilo:
+/// ```rust
+/// assert_eq!(normalize_text_multiplier(0), TEXT_SIZE_MULTIPLIER_MIN);
+/// assert_eq!(normalize_text_multiplier(255), TEXT_SIZE_MULTIPLIER_MAX);
+/// assert_eq!(normalize_text_multiplier(TEXT_SIZE_MULTIPLIER_DEFAULT_U8), TEXT_SIZE_MULTIPLIER_DEFAULT);
+/// ```
+fn normalize_text_multiplier(value: u8) -> f32 {
+    let value: f32 = value.into();
+
+    let min: f32 = u8::MIN.into();
+    let max: f32 = u8::MAX.into();
+
+    let zero_to_one = (value - min) / max;
+
+    zero_to_one * (TEXT_SIZE_MULTIPLIER_MAX - TEXT_SIZE_MULTIPLIER_MIN) + TEXT_SIZE_MULTIPLIER_MIN
 }
 
 /// Vytvoří prázdný slide
