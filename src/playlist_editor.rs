@@ -33,7 +33,7 @@ pub enum Message {
     SavePlaylistAsClicked,
     NewPlaylistNameChanged(String),
     ValidateNewPlaylistName,
-    NewPlaylistNameTaken,
+    InvalidNewPlaylistName(String),
     SavePlaylistAs,
     DeletePlaylist,
     SaveAndExit,
@@ -358,6 +358,14 @@ impl PlaylistEditor {
             }
             Message::SavePlaylistAsClicked => Task::done(Message::ValidateNewPlaylistName.into()),
             Message::ValidateNewPlaylistName => {
+                debug!("Validuji nové jméno pro playlist");
+                if editor.new_playlist_name.trim().is_empty() {
+                    return Task::done(
+                        Message::InvalidNewPlaylistName(String::from("Prázdné jméno není validní"))
+                            .into(),
+                    );
+                }
+
                 debug!("Zjišťuji, jestli se v databázi nachází playlist s daným názvem");
                 let conn = state.db.acquire();
                 let name = editor.new_playlist_name.clone();
@@ -371,17 +379,19 @@ impl PlaylistEditor {
                             if available {
                                 Message::SavePlaylistAs.into()
                             } else {
-                                Message::NewPlaylistNameTaken.into()
+                                Message::InvalidNewPlaylistName(String::from(
+                                    "Takové jméno se již nachází v databázi, vyber jiné",
+                                ))
+                                .into()
                             }
                         }
                         Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
                     },
                 )
             }
-            Message::NewPlaylistNameTaken => {
+            Message::InvalidNewPlaylistName(err_msg) => {
                 debug!("Nastavuji chybovou hlášku, aby uživatel změnil název nového playlistu");
-                editor.new_playlist_err_msg =
-                    String::from("Playlist s daným názvem již existuje, vyber jiný");
+                editor.new_playlist_err_msg = err_msg;
                 Task::none()
             }
             Message::TopButtonsPlaylist => todo!(),
