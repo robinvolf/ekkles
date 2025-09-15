@@ -2,6 +2,10 @@
 
 Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
+## Bugísky
+- Když jsem napsal "Mat 3:9" výběr veršů spadl
+- Když jsem přidal do posledního playlistu píseň s definovaným pořadím slok, Ekkles si myslel, že playlist končí dřív
+
 ## TODO
 
 - [X] CLI utilitka pro import písní a biblí do SQLite databáze
@@ -20,7 +24,11 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 - [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
 - [ ] Prozkoumat možnost klávesových zkratek a přidat je na vhodná místa
   - [ ] Prezentér (ovládání prezentovaného slajdu šipkama)
-- [ ] Přidat zamrznutí/začernění slajdu
+- [ ] Náhled pro výběr písní
+- [ ] Náhled pro prezentér
+- [ ] Možnost přidávání písní/veršů za běhu
+- [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
+- [X] Přidat zamrznutí/začernění slajdu
 - [ ] Přidat editor písní
 - [ ] Rozhodnout, jak řešit vyhledání databáze, config
   - [ ] Rozhodnout co vůbec konfigurovat
