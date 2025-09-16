@@ -39,28 +39,30 @@
             targets = [ "x86_64-unknown-linux-gnu" ];
           }
         );
+
         src = craneLib.cleanCargoSource ./.;
+
+        # Iced potřebuje pro GUI funkcionalitu při runtime další závislosti
+        icedRuntimeDeps = with pkgs; [
+          expat
+          fontconfig
+          freetype
+          freetype.dev
+          libGL
+          pkg-config
+          xorg.libX11
+          xorg.libXcursor
+          xorg.libXi
+          xorg.libXrandr
+          wayland
+          libxkbcommon
+        ];
 
         # Common arguments can be set here to avoid repeating them later
         # Note: changes here will rebuild all dependency crates
         commonArgs = {
           src = craneLib.cleanCargoSource ./.;
           strictDeps = true;
-
-          buildInputs = with pkgs; [
-            expat
-            fontconfig
-            freetype
-            freetype.dev
-            libGL
-            pkg-config
-            xorg.libX11
-            xorg.libXcursor
-            xorg.libXi
-            xorg.libXrandr
-            wayland
-            libxkbcommon
-          ];
         };
 
         # Build *just* the cargo dependencies (of the entire workspace),
@@ -92,31 +94,16 @@
             pname = "ekkles";
             cargoExtraArgs = "-p ekkles";
             src = fileSetForCrate ./.;
+            buildInputs = icedRuntimeDeps;
           }
           // {
-            DATABASE_URL = builtins.trace "Cesta k db je: sqlite://${./ekkles_data/db/db_skeletion.sqlite3}" "sqlite://${./ekkles_data/db/db_skeletion.sqlite3}";
+            DATABASE_URL = "sqlite://${./ekkles_data/db/db_skeletion.sqlite3}";
 
-            # Jinak vybuchne kompozitor
+            # Protože winit používá dl_open(), aby dynamicky otevřel knihovny,
+            # wrapneme program a natvrdo nastavíme cestu ke knihovnám, které zkusí otevřít
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postInstall = ''
-              makeWrapper $out/bin/ekkles $out/bin/wrapped --set LD_LIBRARY_PATH ${builtins.toString (pkgs.lib.makeLibraryPath [
-                  pkgs.expat
-                  pkgs.fontconfig
-                  pkgs.freetype
-                  pkgs.freetype.dev
-                  pkgs.libGL
-                  pkgs.vulkan-headers
-                  pkgs.vulkan-loader
-                  pkgs.vulkan-extension-layer
-                  pkgs.vulkan-validation-layers
-                  pkgs.xorg.libX11
-                  pkgs.xorg.libXcursor
-                  pkgs.xorg.libXi
-                  pkgs.xorg.libXrandr
-                  pkgs.wayland
-                  pkgs.libxkbcommon
-                  pkgs.vulkan-loader
-              ])} --set RUST_LOG info
+              wrapProgram $out/bin/ekkles --set LD_LIBRARY_PATH ${builtins.toString (pkgs.lib.makeLibraryPath icedRuntimeDeps)}
             '';
           }
         );
