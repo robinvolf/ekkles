@@ -1,6 +1,6 @@
 //! Modul pro interakci s databází
 
-use std::{fs::create_dir_all, path::Path};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use sqlx::{SqlitePool, query, sqlite::SqliteConnectOptions};

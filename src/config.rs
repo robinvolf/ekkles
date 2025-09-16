@@ -5,7 +5,7 @@ use const_format::{Case, formatcp, map_ascii_case};
 use crate::PROGRAM_NAME;
 
 const DATABASE_NAME: &str = "database.sqlite3";
-const DEFAULT_USER_DATA_DIR: &str = "~/.local/share";
+const DEFAULT_USER_DATA_DIR: &str = ".local/share";
 const DB_PATH_ENV: &str = formatcp!("{}_DB_PATH", map_ascii_case!(Case::Upper, PROGRAM_NAME));
 
 /// Konfigurace Ekklesu
@@ -40,7 +40,11 @@ fn db_path() -> PathBuf {
 
     let user_data_directory = match env::var("XDG_DATA_HOME") {
         Ok(s) => PathBuf::from(s),
-        Err(_) => PathBuf::from(DEFAULT_USER_DATA_DIR),
+        Err(_) => {
+            let home_dir =
+                PathBuf::from(env::var("HOME").expect("Proměnná prostředí HOME není definovaná"));
+            home_dir.join(DEFAULT_USER_DATA_DIR)
+        }
     };
 
     let program_data_directory = user_data_directory.join(PROGRAM_NAME);
