@@ -90,8 +90,10 @@
 
         desktopFile = pkgs.makeDesktopItem {
           name = "ekkles";
+          exec = "ekkles";
           desktopName = "Ekkles";
           comment = "Prezentační program pro Bohoslužby";
+          icon = "ekkles";
         };
 
         ekkles = craneLib.buildPackage (
@@ -114,6 +116,10 @@
               # Překopírujeme desktop file, aby to šlo pohodlně otevřít na ploše
               mkdir -p $out/share/applications
               cp ${desktopFile}/share/applications/ekkles.desktop $out/share/applications/ekkles.desktop
+
+              # Překopírujeme ikonku
+              mkdir -p $out/share/pixmaps
+              cp "${./pkg/logo.png}" $out/share/pixmaps/ekkles.png
             '';
           }
         );
