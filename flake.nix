@@ -56,6 +56,9 @@
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         individualCrateArgs = commonArgs // {
+          # URL k databázi, aby se pomocí sqlx při kompilaci ověřily dotazy vzhledem ke struktuře tabulek
+          DATABASE_URL = "sqlite://${./ekkles_data/db/db_skeletion.sqlite3}";
+
           inherit cargoArtifacts;
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
         };
@@ -96,6 +99,7 @@
           icon = "ekkles";
         };
 
+        # Samotná GUI Ekkles aplikace
         ekkles = craneLib.buildPackage (
           individualCrateArgs
           // {
@@ -105,8 +109,6 @@
             buildInputs = icedRuntimeDeps;
           }
           // {
-            DATABASE_URL = "sqlite://${./ekkles_data/db/db_skeletion.sqlite3}";
-
             nativeBuildInputs = with pkgs; [ makeWrapper ];
             postInstall = ''
               # Protože winit používá dl_open(), aby dynamicky otevřel knihovny,
@@ -123,16 +125,34 @@
             '';
           }
         );
+
+        # CLI Nástroj pro import souborů do databáze Ekklesu
+        ekkles-cli = craneLib.buildPackage (
+          individualCrateArgs
+          // {
+            pname = "ekkles_cli";
+            cargoExtraArgs = "-p ekkles_cli";
+            src = fileSetForCrate ./.;
+          }
+        );
       in
       {
         checks = {
-          inherit ekkles;
+          inherit ekkles ekkles-cli;
         };
 
-        packages.default = ekkles;
+        packages = {
+          inherit ekkles ekkles-cli;
+          default = ekkles;
+        };
 
-        apps.default = flake-utils.lib.mkApp {
-          drv = ekkles;
+        apps = {
+          ekkles = flake-utils.lib.mkApp {
+            drv = ekkles;
+          };
+          ekkles-cli = flake-utils.lib.mkApp {
+            drv = ekkles-cli;
+          };
         };
 
         devShells.default = craneLib.devShell {
