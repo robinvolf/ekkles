@@ -42,22 +42,6 @@
 
         src = craneLib.cleanCargoSource ./.;
 
-        # Iced potřebuje pro GUI funkcionalitu při runtime další závislosti
-        icedRuntimeDeps = with pkgs; [
-          expat
-          fontconfig
-          freetype
-          freetype.dev
-          libGL
-          pkg-config
-          xorg.libX11
-          xorg.libXcursor
-          xorg.libXi
-          xorg.libXrandr
-          wayland
-          libxkbcommon
-        ];
-
         # Common arguments can be set here to avoid repeating them later
         # Note: changes here will rebuild all dependency crates
         commonArgs = {
@@ -88,6 +72,28 @@
             ];
         };
 
+        # Iced potřebuje pro GUI funkcionalitu při runtime další závislosti
+        icedRuntimeDeps = with pkgs; [
+          expat
+          fontconfig
+          freetype
+          freetype.dev
+          libGL
+          pkg-config
+          xorg.libX11
+          xorg.libXcursor
+          xorg.libXi
+          xorg.libXrandr
+          wayland
+          libxkbcommon
+        ];
+
+        desktopFile = pkgs.makeDesktopItem {
+          name = "ekkles";
+          desktopName = "Ekkles";
+          comment = "Prezentační program pro Bohoslužby";
+        };
+
         ekkles = craneLib.buildPackage (
           individualCrateArgs
           // {
@@ -99,11 +105,15 @@
           // {
             DATABASE_URL = "sqlite://${./ekkles_data/db/db_skeletion.sqlite3}";
 
-            # Protože winit používá dl_open(), aby dynamicky otevřel knihovny,
-            # wrapneme program a natvrdo nastavíme cestu ke knihovnám, které zkusí otevřít
-            nativeBuildInputs = [ pkgs.makeWrapper ];
+            nativeBuildInputs = with pkgs; [ makeWrapper ];
             postInstall = ''
+              # Protože winit používá dl_open(), aby dynamicky otevřel knihovny,
+              # wrapneme program a natvrdo nastavíme cestu ke knihovnám, které zkusí otevřít
               wrapProgram $out/bin/ekkles --set LD_LIBRARY_PATH ${builtins.toString (pkgs.lib.makeLibraryPath icedRuntimeDeps)}
+
+              # Překopírujeme desktop file, aby to šlo pohodlně otevřít na ploše
+              mkdir -p $out/share/applications
+              cp ${desktopFile}/share/applications/ekkles.desktop $out/share/applications/ekkles.desktop
             '';
           }
         );
