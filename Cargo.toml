@@ -9,7 +9,7 @@ edition = "2024"
 
 [dependencies]
 # GUI Framework
-iced = {version = "0.14.0-dev"}
+iced = {version = "0.14.0-dev", default-features = false, features = ["auto-detect-theme", "wgpu", "tiny-skia", "tokio"]}
 # Pro logování událostí v programu
 log = {version = "0.4.27"}
 pretty_env_logger = {version = "0.5.0"}
