@@ -4,13 +4,12 @@ use anyhow::Result;
 use ekkles_data::{Song, playlist::PlaylistMetadata};
 use iced::{
     Alignment, Color, Element, Length, Task,
-    task::Handle,
     widget::{Container, Space, button, column, combo_box, container, row, text},
 };
 use log::debug;
 use sqlx::{Sqlite, pool::PoolConnection};
 
-use crate::{Ekkles, Screen, playlist_editor::PlaylistEditor};
+use crate::{Ekkles, Screen, components::Preview, playlist_editor::PlaylistEditor};
 
 #[derive(Debug, Clone)]
 pub struct SongPickerItem {
@@ -47,56 +46,10 @@ impl From<Message> for crate::Message {
 }
 
 #[derive(Debug)]
-/// Preview pro píseň
-enum Preview {
-    Empty,
-    Loading(Handle),
-    Loaded(Song),
-}
-
-impl Preview {
-    pub fn new() -> Self {
-        Self::Empty
-    }
-
-    /// Začne načítat dané preview.
-    /// Vrátí Task, který reprezentuje načtení zdroje.
-    /// - Pokud se Preview již načítá, původní task je ukončen (abort) a začne se načítat nový
-    pub fn load(
-        &mut self,
-        fut: impl Future<Output = Result<Song>> + Send + 'static,
-    ) -> Task<Result<Song>> {
-        if let Preview::Loading(handle) = self {
-            handle.abort();
-        }
-
-        let (task, handle) = Task::future(fut).abortable();
-
-        *self = Preview::Loading(handle);
-
-        task
-    }
-
-    /// Označí preview za načtené.
-    pub fn loaded(&mut self, song: Song) {
-        if let Preview::Loading(_) = self {
-            *self = Preview::Loaded(song);
-        } else {
-            panic!("Zavoláno loaded() na Preview, které se nenačítalo");
-        }
-    }
-
-    /// Vrátí Preview do původního (prázdného stavu)
-    pub fn reset(&mut self) {
-        *self = Preview::Empty
-    }
-}
-
-#[derive(Debug)]
 pub struct SongPicker {
     songs: Option<combo_box::State<SongPickerItem>>,
     playlist: PlaylistMetadata,
-    preview: Preview,
+    preview: Preview<Song>,
 }
 
 impl SongPicker {
@@ -104,7 +57,7 @@ impl SongPicker {
         Self {
             songs: None,
             playlist,
-            preview: Preview::Empty,
+            preview: Preview::new(),
         }
     }
 
@@ -226,6 +179,20 @@ impl SongPicker {
     }
 }
 
+/// Vytvoří preview písně
 fn song_preview(song: &Song) -> Container<'static, Message> {
-    todo!()
+    let lyrics: String = song
+        .order
+        .iter()
+        .map(|part| format!("[{}]\n{}\n", part, song.parts.get(part).unwrap()))
+        .collect();
+
+    let part_order = song.order.clone().join(", ");
+
+    // TODO: Vyřeš crash, když se zpozdí načtení nějakého preview
+
+    container(column![
+        text(lyrics).align_x(Alignment::Center),
+        row![text(song.title.clone()), text(part_order)]
+    ])
 }
