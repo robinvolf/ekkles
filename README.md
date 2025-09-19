@@ -20,7 +20,7 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 - [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
 - [X] Prozkoumat možnost klávesových zkratek a přidat je na vhodná místa
   - [X] Prezentér (ovládání prezentovaného slajdu šipkama)
-- [ ] Zpřijemni manuální bible picker
+- [X] Zpřijemni manuální bible picker
   - Když vyberu knihu/kapitolu `from`, mělo by ji to nastavit i pro `to`, většinou vybírám verše ze stejné kapitoly
 - [ ] Náhled pro výběr písní
 - [ ] Náhled pro prezentér

@@ -9,7 +9,7 @@ use ekkles_data::{
     playlist::PlaylistMetadata,
 };
 use iced::{
-    Alignment, Element, Length, Task,
+    Alignment, Element, Length, Padding, Task,
     widget::{
         self, button, column, container, pick_list, row, scrollable, text, text_input,
         vertical_space,
@@ -196,7 +196,9 @@ impl BiblePicker {
                     .map(|(verse_number, text)| format!("{verse_number}: {text}\n"))
                     .collect::<String>();
                 trace!("Preview vypadá takto:\n{}", preview_text);
-                container(scrollable(text(preview_text)))
+                container(scrollable(
+                    container(text(preview_text)).padding(Padding::ZERO.right(10)), // Padding, aby scrollbar nepřekrýval text
+                ))
             }
             None => container(vertical_space()),
         };
@@ -286,18 +288,24 @@ impl BiblePicker {
                 picker.indexes.picked_from_book = Some(book);
                 picker.indexes.picked_from_chapter = None;
                 picker.indexes.picked_from_verse = None;
-                Task::done(Message::SelectionChanged.into())
+                let pick_to_book = Task::done(Message::ToBookPicked(book).into());
+                let selection_changed = Task::done(Message::SelectionChanged.into());
+                Task::chain(pick_to_book, selection_changed)
             }
             Message::FromChapterPicked(chapter) => {
                 debug!("Vybrána kapitola (od) {}", chapter);
                 picker.indexes.picked_from_chapter = Some(chapter);
                 picker.indexes.picked_from_verse = None;
-                Task::done(Message::SelectionChanged.into())
+                let pick_to_chapter = Task::done(Message::ToChapterPicked(chapter).into());
+                let selection_changed = Task::done(Message::SelectionChanged.into());
+                Task::chain(pick_to_chapter, selection_changed)
             }
             Message::FromVersePicked(verse) => {
                 debug!("Vybrán verš (od) {}", verse);
                 picker.indexes.picked_from_verse = Some(verse);
-                Task::done(Message::SelectionChanged.into())
+                let pick_to_verse = Task::done(Message::ToVersePicked(verse).into());
+                let selection_changed = Task::done(Message::SelectionChanged.into());
+                Task::chain(pick_to_verse, selection_changed)
             }
             Message::ToBookPicked(book) => {
                 debug!("Vybrána kniha (do) {}", book);
@@ -372,6 +380,7 @@ impl BiblePicker {
             },
             Message::SetPreview(passage) => {
                 debug!("Nastavena pasáž pro preview");
+                picker.err_msg.clear();
                 picker.preview = Some(passage);
                 Task::none()
             }
@@ -479,21 +488,6 @@ impl BiblePickerIndexes {
             picked_to_book: None,
             picked_to_chapter: None,
             picked_to_verse: None,
-        }
-    }
-
-    /// Pokud jsou všechny položky `None`, vrátí `true`, jinak `false`.
-    fn is_empty(&self) -> bool {
-        if self.picked_from_book.is_none()
-            && self.picked_from_chapter.is_none()
-            && self.picked_from_verse.is_none()
-            && self.picked_to_book.is_none()
-            && self.picked_to_chapter.is_none()
-            && self.picked_to_verse.is_none()
-        {
-            true
-        } else {
-            false
         }
     }
 
