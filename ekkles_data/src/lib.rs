@@ -22,7 +22,7 @@ pub type PartTag = String;
 /// ### Invarianty
 /// - Klíče v `parts` a položky vektoru `ordered` musejí být totožné
 /// - Jednotlivé položky vektoru `order` nesmí obsahovat znak mezery ` `
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Song {
     /// Název písně
     pub title: String,

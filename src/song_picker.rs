@@ -1,14 +1,14 @@
-use std::{fmt::Display, time::Duration};
+use std::fmt::Display;
 
 use anyhow::Result;
-use ekkles_data::{Song, bible::get_available_translations, playlist::PlaylistMetadata};
+use ekkles_data::{Song, playlist::PlaylistMetadata};
 use iced::{
     Alignment, Color, Element, Length, Task,
-    widget::{button, column, combo_box, container, row, text},
+    task::Handle,
+    widget::{Container, Space, button, column, combo_box, container, row, text},
 };
 use log::debug;
 use sqlx::{Sqlite, pool::PoolConnection};
-use tokio::time::sleep;
 
 use crate::{Ekkles, Screen, playlist_editor::PlaylistEditor};
 
@@ -36,6 +36,8 @@ pub enum Message {
     SongsLoaded(Vec<SongPickerItem>),
     ReturnToEditor,
     SongPicked(i64),
+    LoadPreview(SongPickerItem),
+    PreviewLoaded(Song),
 }
 
 impl From<Message> for crate::Message {
@@ -45,18 +47,64 @@ impl From<Message> for crate::Message {
 }
 
 #[derive(Debug)]
+/// Preview pro píseň
+enum Preview {
+    Empty,
+    Loading(Handle),
+    Loaded(Song),
+}
+
+impl Preview {
+    pub fn new() -> Self {
+        Self::Empty
+    }
+
+    /// Začne načítat dané preview.
+    /// Vrátí Task, který reprezentuje načtení zdroje.
+    /// - Pokud se Preview již načítá, původní task je ukončen (abort) a začne se načítat nový
+    pub fn load(
+        &mut self,
+        fut: impl Future<Output = Result<Song>> + Send + 'static,
+    ) -> Task<Result<Song>> {
+        if let Preview::Loading(handle) = self {
+            handle.abort();
+        }
+
+        let (task, handle) = Task::future(fut).abortable();
+
+        *self = Preview::Loading(handle);
+
+        task
+    }
+
+    /// Označí preview za načtené.
+    pub fn loaded(&mut self, song: Song) {
+        if let Preview::Loading(_) = self {
+            *self = Preview::Loaded(song);
+        } else {
+            panic!("Zavoláno loaded() na Preview, které se nenačítalo");
+        }
+    }
+
+    /// Vrátí Preview do původního (prázdného stavu)
+    pub fn reset(&mut self) {
+        *self = Preview::Empty
+    }
+}
+
+#[derive(Debug)]
 pub struct SongPicker {
     songs: Option<combo_box::State<SongPickerItem>>,
-    picked_song: Option<SongPickerItem>,
     playlist: PlaylistMetadata,
+    preview: Preview,
 }
 
 impl SongPicker {
     pub fn new(playlist: PlaylistMetadata) -> Self {
         Self {
             songs: None,
-            picked_song: None,
             playlist,
+            preview: Preview::Empty,
         }
     }
 
@@ -73,16 +121,24 @@ impl SongPicker {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let picker: Element<Message> = self
+        let picker = self
             .songs
             .as_ref()
             .map(|combo_box_state| {
-                combo_box(combo_box_state, "Název písně", None, |item| {
-                    Message::SongPicked(item.id)
-                })
-                .into()
+                container(
+                    combo_box(combo_box_state, "Název písně", None, |item| {
+                        Message::SongPicked(item.id)
+                    })
+                    .on_option_hovered(Message::LoadPreview),
+                )
             })
-            .unwrap_or(text("Načítám písně ...").into());
+            .unwrap_or(container(text("Načítám písně ...")));
+
+        let preview = match &self.preview {
+            Preview::Empty => container(Space::new(Length::Shrink, Length::Shrink)),
+            Preview::Loading(_) => container(text("Načítám náhled")),
+            Preview::Loaded(song) => song_preview(song),
+        };
 
         Into::<Element<Message>>::into(container(
             row![
@@ -94,17 +150,20 @@ impl SongPicker {
                 .align_bottom(Length::Fill)
                 .width(Length::FillPortion(1))
                 .padding(30),
-                column![text("Vyber píseň:"), picker]
-                    .spacing(10)
-                    .align_x(Alignment::Center)
-                    .width(Length::FillPortion(2)),
+                column![
+                    picker.align_bottom(Length::FillPortion(6)),
+                    preview.height(Length::FillPortion(4))
+                ]
+                .spacing(10)
+                .align_x(Alignment::Center)
+                .width(Length::FillPortion(2)),
                 container("").width(Length::FillPortion(1))
             ]
             .padding(10)
             .height(Length::Fill)
             .align_y(Alignment::Center),
         ))
-        // .explain(Color::BLACK)
+        .explain(Color::BLACK)
     }
 
     pub fn update(state: &mut Ekkles, message: Message) -> Task<crate::Message> {
@@ -146,6 +205,27 @@ impl SongPicker {
                 picker.playlist.push_song(id);
                 Task::done(Message::ReturnToEditor.into())
             }
+            Message::LoadPreview(item) => {
+                debug!("Načítám preview pro píseň {}", item.name);
+                let conn = state.db.acquire();
+                let fut = async move {
+                    let mut conn = conn.await?;
+                    Song::load_from_db(item.id, &mut conn).await
+                };
+                picker.preview.load(fut).map(|res| match res {
+                    Ok(song) => Message::PreviewLoaded(song).into(),
+                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                })
+            }
+            Message::PreviewLoaded(song) => {
+                debug!("Načetlo se previw pro píseň {}", song.title);
+                picker.preview.loaded(song);
+                Task::none()
+            }
         }
     }
+}
+
+fn song_preview(song: &Song) -> Container<'static, Message> {
+    todo!()
 }

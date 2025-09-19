@@ -89,7 +89,7 @@ impl Song {
         Ok(())
     }
 
-    /// Načte píseň s `id` z SQLite databáze pomocí `pool`.
+    /// Načte píseň s `id` z SQLite databáze pomocí `conn`.
     ///
     /// ### Ošetření chyb
     /// Vrátí Error, když:
