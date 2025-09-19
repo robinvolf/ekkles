@@ -329,7 +329,7 @@ impl Presenter {
     }
 
     fn is_last_slide_selected(&self) -> bool {
-        self.playlist_slides.get(self.current_presented_index) == self.playlist_slides.last()
+        self.current_presented_index == self.playlist_slides.len() - 1
     }
 
     /// Zkonstruuje GUI pro ovládací okno
@@ -383,8 +383,11 @@ impl Presenter {
                     }
                 });
 
-        let top_selected = self.is_first_slide_selected();
-        let bottom_selected = self.is_last_slide_selected();
+        let first_slide_selected = self.is_first_slide_selected();
+        let last_slide_selected = self.is_last_slide_selected();
+        trace!(
+            "Vybrán první slajd? [{first_slide_selected}] Vybrán poslední slajd? [{last_slide_selected}]"
+        );
 
         let reset_text_size_button_msg = if self.text_scale == TEXT_SIZE_MULTIPLIER_DEFAULT_U8 {
             None
@@ -432,14 +435,14 @@ impl Presenter {
         let presentation_control = column![
             button("Nahoru")
                 .width(Length::Fill)
-                .on_press_maybe(if top_selected {
+                .on_press_maybe(if first_slide_selected {
                     None
                 } else {
                     Some(Message::RequestPrevSlide)
                 }),
             button("Dolů")
                 .width(Length::Fill)
-                .on_press_maybe(if bottom_selected {
+                .on_press_maybe(if last_slide_selected {
                     None
                 } else {
                     Some(Message::RequestNextSlide)

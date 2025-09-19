@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use config::Config;
 use iced::Element;
 use iced::window::{self, Id, Settings};
@@ -18,9 +16,6 @@ mod song_picker;
 mod update;
 
 const PROGRAM_NAME: &str = "Ekkles";
-
-/// Prasárna, ale proteď stačí
-const DB_PATH: &str = "ekkles_data/db/database.sqlite3";
 
 #[derive(Debug)]
 /// Jednotlivé obrazovky aplikace
