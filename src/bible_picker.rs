@@ -1,6 +1,6 @@
-use std::{fmt::Display, ops::Deref, sync::LazyLock};
+use std::{fmt::Display, sync::LazyLock};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use ekkles_data::{
     bible::{
         get_available_translations,
@@ -128,14 +128,15 @@ impl BiblePicker {
                 self.indexes.picked_from_book,
                 self.indexes.picked_from_chapter
             ) {
-                (Some(book), Some(chapter)) => pick_list(
-                    verses_in_chapter(book, chapter)
-                        .unwrap()
-                        .collect::<Vec<u8>>(),
-                    self.indexes.picked_from_verse,
-                    Message::FromVersePicked
-                )
-                .placeholder("Verš"),
+                (Some(book), Some(chapter)) if verses_in_chapter(book, chapter).is_some() =>
+                    pick_list(
+                        verses_in_chapter(book, chapter)
+                            .unwrap() // Můžu unwrapnout, zkontroloval jsem v match guard
+                            .collect::<Vec<u8>>(),
+                        self.indexes.picked_from_verse,
+                        Message::FromVersePicked
+                    )
+                    .placeholder("Verš"),
                 _ => pick_list(
                     vec![],
                     self.indexes.picked_from_chapter,
@@ -168,14 +169,15 @@ impl BiblePicker {
             }
             .width(Length::FillPortion(1)),
             match (self.indexes.picked_to_book, self.indexes.picked_to_chapter) {
-                (Some(book), Some(chapter)) => pick_list(
-                    verses_in_chapter(book, chapter)
-                        .unwrap()
-                        .collect::<Vec<u8>>(),
-                    self.indexes.picked_to_verse,
-                    Message::ToVersePicked
-                )
-                .placeholder("Verš"),
+                (Some(book), Some(chapter)) if verses_in_chapter(book, chapter).is_some() =>
+                    pick_list(
+                        verses_in_chapter(book, chapter)
+                            .unwrap() // Můžu unwrapnout, zkontroloval jsem v match guard
+                            .collect::<Vec<u8>>(),
+                        self.indexes.picked_to_verse,
+                        Message::ToVersePicked
+                    )
+                    .placeholder("Verš"),
                 _ => pick_list(
                     vec![],
                     self.indexes.picked_to_chapter,
@@ -382,11 +384,9 @@ impl BiblePicker {
                 trace!("Změnil se obsah quick inputu: \"{input}\"");
                 picker.quick_picker_content = input;
                 let indexes = picker.parse_quick_selection();
-                if !indexes.is_empty() {
-                    trace!(
-                        "Quick input byl alespoň částečně zparsován, nastavuji výběr na {:#?}",
-                        indexes
-                    );
+
+                if indexes.validate().is_ok() {
+                    trace!("Quick input je validní, nastavuji výběr na {:#?}", indexes);
                     picker.indexes = indexes;
                     Task::done(Message::SelectionChanged.into())
                 } else {
@@ -401,38 +401,19 @@ impl BiblePicker {
     /// že byl vybrán překlad. Pokud cokoliv z tohoto není splněno, vrací Error.
     /// Pokud validace proběhne úspěšně vrací dvojici indexů do bible `from` a `to`.
     fn validate(&self) -> Result<(VerseIndex, VerseIndex)> {
-        const CONTEXT_MSG: &str = "Pasáž ještě není vybraná celá";
-
         if self.picked_translation.is_none() {
             bail!("Nebyl vybrán příslušný překlad");
         }
 
-        let from = VerseIndex::try_new(
-            self.indexes.picked_from_book.context(CONTEXT_MSG)?,
-            self.indexes.picked_from_chapter.context(CONTEXT_MSG)?,
-            self.indexes.picked_from_verse.context(CONTEXT_MSG)?,
-        )
-        .context("Neplatný začátek pasáže")?;
-
-        let to = VerseIndex::try_new(
-            self.indexes.picked_to_book.context(CONTEXT_MSG)?,
-            self.indexes.picked_to_chapter.context(CONTEXT_MSG)?,
-            self.indexes.picked_to_verse.context(CONTEXT_MSG)?,
-        )
-        .context("Neplatný konec pasáže")?;
-
-        if from > to {
-            Err(anyhow!("Začátek pasáže se nachází až za koncem"))
-        } else {
-            Ok((from, to))
-        }
+        self.indexes.validate()
     }
 
     /// Pokusí se zparsovat rychlý výběr a vrátí indexy pasáže.
     ///
     /// ### Co zparsuje
-    /// Očekává se vstup ve formátu `KNIHA KAPITOLA:VERŠ-[KNIHA] [KAPITOLA:]VERŠ`
-    /// (pokud není druhá kniha nebo kapitola uvedeny, bude použita první).
+    /// Očekává se vstup ve formátu `KNIHA KAPITOLA:VERŠ-[KNIHA] [KAPITOLA:][VERŠ]`.
+    /// Pokud není druhá kniha/kapitola/verš uvedeny, bude použita první.
+    /// Pokud je pouze první trojice uvedena, je to chápáno jako referekce jediného verše.
     ///
     /// - Parsování knih funguje podle [`Book::parse()`].
     fn parse_quick_selection(&self) -> BiblePickerIndexes {
@@ -466,7 +447,6 @@ impl BiblePicker {
                     picked_to_chapter: caps
                         .name("to_chapter")
                         .map_or(picked_from_chapter, |m| m.as_str().parse().ok()),
-
                     picked_to_verse: caps
                         .name("to_verse")
                         .map_or(picked_from_verse, |m| m.as_str().parse().ok()),
@@ -514,6 +494,49 @@ impl BiblePickerIndexes {
             true
         } else {
             false
+        }
+    }
+
+    /// Vrátí `true`, pokud jsou všechny položky nastaveny na Some(_).
+    fn is_filled(&self) -> bool {
+        if self.picked_from_book.is_some()
+            && self.picked_from_chapter.is_some()
+            && self.picked_from_verse.is_some()
+            && self.picked_to_book.is_some()
+            && self.picked_to_chapter.is_some()
+            && self.picked_to_verse.is_some()
+        {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Zkontroluje, že:
+    /// - Je kompletně vyplněn pomocí [`BiblePickerIndexes::is_filled`]
+    /// - Knihy obsahují kapitolu a verš
+    /// - Začáteční index se v Písmu nachází před koncovým indexem
+    fn validate(&self) -> Result<(VerseIndex, VerseIndex)> {
+        if !self.is_filled() {
+            bail!("Picker není celý vyplněný");
+        }
+
+        let from = VerseIndex::try_new(
+            self.picked_from_book.unwrap(),
+            self.picked_from_chapter.unwrap(),
+            self.picked_from_verse.unwrap(),
+        );
+
+        let to = VerseIndex::try_new(
+            self.picked_to_book.unwrap(),
+            self.picked_to_chapter.unwrap(),
+            self.picked_to_verse.unwrap(),
+        );
+
+        match (from, to) {
+            (Some(from), Some(to)) if !(from > to) => Ok((from, to)),
+            (Some(_), Some(_)) => Err(anyhow!("Počáteční index se nachází za koncovým indexem")),
+            _ => Err(anyhow!("Počáteční nebo koncový index nejsou validní")),
         }
     }
 }

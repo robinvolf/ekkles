@@ -2,10 +2,6 @@
 
 Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
-## Bugísky
-- Když jsem napsal "Mat 3:9" výběr veršů spadl
-- Když jsem přidal do posledního playlistu píseň s definovaným pořadím slok, Ekkles si myslel, že playlist končí dřív
-
 ## TODO
 
 - [X] CLI utilitka pro import písní a biblí do SQLite databáze
@@ -22,8 +18,10 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 - [X] Zprovozni přidávání pasáží
 - [X] Napsat picker pasáží
 - [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
-- [ ] Prozkoumat možnost klávesových zkratek a přidat je na vhodná místa
-  - [ ] Prezentér (ovládání prezentovaného slajdu šipkama)
+- [X] Prozkoumat možnost klávesových zkratek a přidat je na vhodná místa
+  - [X] Prezentér (ovládání prezentovaného slajdu šipkama)
+- [ ] Zpřijemni manuální bible picker
+  - Když vyberu knihu/kapitolu `from`, mělo by ji to nastavit i pro `to`, většinou vybírám verše ze stejné kapitoly
 - [ ] Náhled pro výběr písní
 - [ ] Náhled pro prezentér
 - [ ] Možnost přidávání písní/veršů za běhu
@@ -38,6 +36,9 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
   - Problémové, používám moc novou iced verzi (custom knihovničky nefungujou), pravděpodobně lepší počkat, než bude tato funkcionalita přímo v iced
 - [ ] Lze optimalizovat některá místa, kde se mění obrazovka a místo klonování věcí lze použít [replace_with](https://docs.rs/replace_with/latest/replace_with/)
 - [ ] Sniž závislost na mezi jednotlivými obrazovkami pomocí [senzorů](https://docs.iced.rs/iced/widget/sensor/struct.Sensor.html), které můžou při prvním načtení obrazovky začít načítat věci z databáze
+
+## Bugísky
+Žádné známé, hurá!
 
 ## Vývoj
 
