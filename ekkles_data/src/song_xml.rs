@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use lazy_static::lazy_static;
 use regex::{self, Regex, RegexBuilder};
 use roxmltree::Document;
-use std::{collections::HashMap, fs::read_to_string, path::Path};
+use std::{borrow::Cow, collections::HashMap, fs::read_to_string, path::Path, sync::LazyLock};
 
 /// Název XML elementu obsahující název písně
 const XML_TITLE_ELEM_NAME: &str = "title";
@@ -127,40 +127,48 @@ impl Song {
 /// ### Akordy
 /// Pokud jsou ve slovech přítomné akordy (řádky začínající `.`), jsou odstraněny.
 ///
+/// ### Repetice
+/// Pokud je ve slovech repetice značena jako `[: slova, která se mají opakovat :]`,
+/// budou znaku `[[`/`]` nahrazeny znakem `/`.
+///
 /// ### Rozdělení
 /// Rozdělí slova do podčástí. Používá k tomu separátory, které vypadají následovně:
 /// `[` `tag` `]`, `tag` je libovolný řetězec znaků a je poté použit pro identifikaci dané části.
 fn parse_lyrics(raw_lyrics: &str) -> Vec<(PartTag, String)> {
     // Odstranění whitespace znaků ze začátku a konce každého řádku
-    let trimmed = {
-        // Toto je strašlivý hack, potřeboval bych mezi každé dvě položky iterátoru strčit '\n',
-        // ale https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.intersperse není
-        // stabilizované, tudíž to musím strčit za každou položku a potom to odstranit za poslední
-        let mut trimmed: String = raw_lyrics
-            .lines()
-            .map(|line| {
-                let mut trimmed_line = line.trim().to_string();
-                trimmed_line.push('\n'); // lines() odstraňuje znaky nového řádku, musíme je zpátky přidat
-                trimmed_line
-            })
-            .collect();
-        match trimmed.pop() {
-            // Pokud jsme narazili na něco jiného než znak nového řádku, vrátíme ho zpátky
-            Some(ch) if ch != '\n' => trimmed.push(ch),
-            // Pokud je řetězec prázdný (None) nebo byl vrácen znak nového řádku, úspěch
-            _ => (),
-        }
-        trimmed
-    };
+    let trimmed: String = raw_lyrics
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let fixed_repetitions = fix_repetitions(&trimmed);
 
     // Odstranění řádků s akordy a prázdných řádků
-    let chordless_without_empty_lines = CHORD_AND_EMPTY_LINES_REGEX.replace_all(&trimmed, "");
+    let chordless_without_empty_lines =
+        CHORD_AND_EMPTY_LINES_REGEX.replace_all(&fixed_repetitions, "");
 
     // Extrakce dvojic (tag, slova)
     TAG_VERSE_REGEX
         .captures_iter(&chordless_without_empty_lines)
         .map(|capture| (capture["tag"].to_string(), capture["part"].to_string()))
         .collect()
+}
+
+/// Nahradí v repeticích značených jako `[: slova, která se mají opakovat :]`,
+/// znaky `[[`/`]` znakem `/`.
+fn fix_repetitions(lyrics: &str) -> Cow<'_, str> {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?P<first>\[:)|(?P<second>:\])").expect("Nelze zkompilovat regex")
+    });
+
+    REGEX.replace_all(&lyrics, |caps: &regex::Captures<'_>| {
+        match (caps.name("first"), caps.name("second")) {
+            (None, Some(_)) => ":/",
+            (Some(_), None) => "/:",
+            _ => unreachable!(),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -226,6 +234,63 @@ mod tests {
             ),
         ];
         let res = parse_lyrics(&RAW_LYRICS);
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_lyrics_with_brackets() {
+        const LYRICS_WITH_BRACKETS: &str = r#"[Ca]
+  [: hospodin, jen hospodin
+  je záštita má a píseň má,
+  Hospodin, jen Hospodin
+  je spása má :]
+ 
+[Cb]
+  Haleluja, jásej, plesej Sijóne,
+  haleluja, velký Král je vprostřed nás,
+  haleluja, jeho skutky ohlašme,
+  haleluja, svého Pána chvalme dál.
+ 
+[V1]
+  Nemusím se bát, doufám v Hospodina,
+  doufám v Hospodina.
+  Teď už nemám strach, vždyť Bůh je spása má,
+  Bůh je spása má.
+ 
+[V2]
+  Jásot, veselí je u pramenů spásy
+  u pramenů spásy.
+  Pána oslavím, ať to ví celá zem,
+  ať to ví celá zem."#;
+
+        let expected = vec![
+            (
+                String::from("Ca"),
+                String::from(
+                    "/: hospodin, jen hospodin\nje záštita má a píseň má,\nHospodin, jen Hospodin\nje spása má :/",
+                ),
+            ),
+            (
+                String::from("Cb"),
+                String::from(
+                    "Haleluja, jásej, plesej Sijóne,\nhaleluja, velký Král je vprostřed nás,\nhaleluja, jeho skutky ohlašme,\nhaleluja, svého Pána chvalme dál.",
+                ),
+            ),
+            (
+                String::from("V1"),
+                String::from(
+                    "Nemusím se bát, doufám v Hospodina,\ndoufám v Hospodina.\nTeď už nemám strach, vždyť Bůh je spása má,\nBůh je spása má.",
+                ),
+            ),
+            (
+                String::from("V2"),
+                String::from(
+                    "Jásot, veselí je u pramenů spásy\nu pramenů spásy.\nPána oslavím, ať to ví celá zem,\nať to ví celá zem.",
+                ),
+            ),
+        ];
+
+        let res = parse_lyrics(&LYRICS_WITH_BRACKETS);
         assert_eq!(res, expected);
     }
 
