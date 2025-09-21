@@ -3,8 +3,11 @@ use std::fmt::Display;
 use anyhow::Result;
 use ekkles_data::{Song, playlist::PlaylistMetadata};
 use iced::{
-    Alignment, Color, Element, Length, Task,
-    widget::{Container, Space, button, column, combo_box, container, row, text},
+    Alignment, Element, Length, Task,
+    widget::{
+        Container, Space, button, column, combo_box, container, horizontal_rule, row, scrollable,
+        text,
+    },
 };
 use log::debug;
 use sqlx::{Sqlite, pool::PoolConnection};
@@ -34,9 +37,10 @@ pub enum Message {
     LoadSongs,
     SongsLoaded(Vec<SongPickerItem>),
     ReturnToEditor,
-    SongPicked(i64),
+    SelectSong(SongPickerItem),
     LoadPreview(SongPickerItem),
     PreviewLoaded(Song),
+    ConfirmSelection,
 }
 
 impl From<Message> for crate::Message {
@@ -48,6 +52,7 @@ impl From<Message> for crate::Message {
 #[derive(Debug)]
 pub struct SongPicker {
     songs: Option<combo_box::State<SongPickerItem>>,
+    selected: Option<SongPickerItem>,
     playlist: PlaylistMetadata,
     preview: Preview<Song>,
 }
@@ -58,6 +63,7 @@ impl SongPicker {
             songs: None,
             playlist,
             preview: Preview::new(),
+            selected: None,
         }
     }
 
@@ -79,9 +85,12 @@ impl SongPicker {
             .as_ref()
             .map(|combo_box_state| {
                 container(
-                    combo_box(combo_box_state, "Název písně", None, |item| {
-                        Message::SongPicked(item.id)
-                    })
+                    combo_box(
+                        combo_box_state,
+                        "Název písně",
+                        self.selected.as_ref(),
+                        Message::SelectSong,
+                    )
                     .on_option_hovered(Message::LoadPreview),
                 )
             })
@@ -89,34 +98,31 @@ impl SongPicker {
 
         let preview = match &self.preview {
             Preview::Empty => container(Space::new(Length::Shrink, Length::Shrink)),
-            Preview::Loading(_) => container(text("Načítám náhled")),
+            Preview::Loading(_) => container(text("Načítám náhled ...")).center(Length::Fill),
             Preview::Loaded(song) => song_preview(song),
         };
 
         Into::<Element<Message>>::into(container(
             row![
-                container(
+                column![
+                    picker.height(Length::Fill),
                     button("Zpět")
                         .on_press(Message::ReturnToEditor)
                         .width(Length::Fill)
-                )
-                .align_bottom(Length::Fill)
-                .width(Length::FillPortion(1))
-                .padding(30),
+                        .height(Length::Shrink)
+                ],
                 column![
-                    picker.align_bottom(Length::FillPortion(6)),
-                    preview.height(Length::FillPortion(4))
+                    preview.height(Length::Fill),
+                    button("Potvrdit")
+                        .width(Length::Fill)
+                        .height(Length::Shrink)
+                        .on_press(Message::ConfirmSelection)
                 ]
-                .spacing(10)
-                .align_x(Alignment::Center)
-                .width(Length::FillPortion(2)),
-                container("").width(Length::FillPortion(1))
             ]
-            .padding(10)
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
+            .padding(30)
+            .spacing(10),
         ))
-        .explain(Color::BLACK)
+        // .explain(Color::BLACK)
     }
 
     pub fn update(state: &mut Ekkles, message: Message) -> Task<crate::Message> {
@@ -153,8 +159,11 @@ impl SongPicker {
                 state.screen = Screen::EditPlaylist(PlaylistEditor::new(picker.playlist.clone()));
                 Task::done(crate::playlist_editor::Message::LoadSongNameCache.into())
             }
-            Message::SongPicked(id) => {
-                debug!("Byla vybrána píseň s id {id}");
+            Message::ConfirmSelection => {
+                debug!("Byla potvrzena píseň {:?}", picker.selected);
+                let id = picker.selected.as_ref().expect(
+                            "Byla potvrzena volba, ale nebyla zvolena píseň, toto by se nikdy nemělo stát",
+                        ).id;
                 picker.playlist.push_song(id);
                 Task::done(Message::ReturnToEditor.into())
             }
@@ -175,6 +184,11 @@ impl SongPicker {
                 picker.preview.loaded(song);
                 Task::none()
             }
+            Message::SelectSong(selected) => {
+                debug!("Byla vybrána píseň {:?}", picker.selected);
+                picker.selected = Some(selected);
+                Task::none()
+            }
         }
     }
 }
@@ -187,12 +201,9 @@ fn song_preview(song: &Song) -> Container<'static, Message> {
         .map(|part| format!("[{}]\n{}\n", part, song.parts.get(part).unwrap()))
         .collect();
 
-    let part_order = song.order.clone().join(", ");
-
-    // TODO: Vyřeš crash, když se zpozdí načtení nějakého preview
-
     container(column![
-        text(lyrics).align_x(Alignment::Center),
-        row![text(song.title.clone()), text(part_order)]
+        text(song.title.clone()).center(),
+        horizontal_rule(2),
+        container(scrollable(text(lyrics).align_x(Alignment::Center))).center(Length::Fill),
     ])
 }
