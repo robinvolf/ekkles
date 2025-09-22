@@ -22,13 +22,13 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
   - [X] Prezentér (ovládání prezentovaného slajdu šipkama)
 - [X] Zpřijemni manuální bible picker
   - Když vyberu knihu/kapitolu `from`, mělo by ji to nastavit i pro `to`, většinou vybírám verše ze stejné kapitoly
-- [ ] Náhled pro výběr písní
+- [X] Náhled pro výběr písní
 - [ ] Náhled pro prezentér
 - [ ] Možnost přidávání písní/veršů za běhu
 - [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
 - [X] Přidat zamrznutí/začernění slajdu
 - [ ] Přidat editor písní
-- [ ] Rozhodnout, jak řešit vyhledání databáze, config
+- [X] Rozhodnout, jak řešit vyhledání databáze, config
   - [ ] Rozhodnout co vůbec konfigurovat
 - [ ] Prozkoumat modální okýnka (vanilla pomocí stack/overlay nebo nějaká [knihovnička](https://github.com/pml68/iced_dialog))
 - [ ] Začleň ikonky pomocí custom fontů přes [iced_fonts](https://github.com/Redhawk18/iced_fonts)
