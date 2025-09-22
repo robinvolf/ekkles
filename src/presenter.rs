@@ -15,10 +15,10 @@ use crate::pick_playlist::PlaylistPicker;
 use crate::{Ekkles, Screen};
 
 /// Počet veršů na jeden slajd, proteď konstanta
-const VERSES_PER_SLIDE: usize = 2;
+const VERSES_PER_SLIDE: usize = 1;
 
-const TEXT_SIZE_MULTIPLIER_MIN: f32 = 0.5;
-const TEXT_SIZE_MULTIPLIER_MAX: f32 = 3.0;
+const TEXT_SIZE_MULTIPLIER_MIN: f32 = 0.3;
+const TEXT_SIZE_MULTIPLIER_MAX: f32 = 2.0;
 const TEXT_SIZE_MULTIPLIER_DEFAULT: f32 = 1.0;
 /// Jelikož [`iced::widget::slider()`] potřebuje range a range přes f32 hodnoty se nechová dobře,
 /// používám pro range u8 (0..=255) a pomocí [`normalize_text_multiplier`] range poté
@@ -29,7 +29,7 @@ const TEXT_SIZE_MULTIPLIER_DEFAULT_U8: u8 = ((TEXT_SIZE_MULTIPLIER_DEFAULT
     * u8::MAX as f32) as u8;
 
 /// Velikost textu pro hlavní obsah snímku
-const MAIN_TEXT_SIZE: f32 = 70.0;
+const MAIN_TEXT_SIZE: f32 = 50.0;
 /// Velikost textu pro doplňující obsah snímku
 const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
 
@@ -82,17 +82,22 @@ impl PassageSlide {
         let verses_text_size = MAIN_TEXT_SIZE * text_size_multiplier;
         let indexes_text_size = ADDITIONAL_TEXT_SIZE * text_size_multiplier;
 
-        let verses_text: String = self
+        let verses_content: String = self
             .verses
             .iter()
             .map(|(number, content)| format!("{}: {}", number, content))
             .collect();
 
-        let indexes_text = format!("{} - {}", self.passage_indexes.0, self.passage_indexes.1);
+        let indexes_content = format!("{} - {}", self.passage_indexes.0, self.passage_indexes.1);
 
-        let verses = container(text(verses_text).size(verses_text_size)).center(Length::Fill);
+        let verses = container(
+            text(verses_content)
+                .size(verses_text_size)
+                .wrapping(text::Wrapping::WordOrGlyph), // Abychom věděli, kdy změnit velikost textu
+        )
+        .center(Length::Fill);
         let indexes = container(
-            text(indexes_text)
+            text(indexes_content)
                 .align_x(Alignment::Center)
                 .size(indexes_text_size),
         )
