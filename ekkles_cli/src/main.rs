@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use ekkles_data::{Song, bible::parse_bible_from_xml};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
@@ -15,12 +15,30 @@ struct Cli {
     db_file: PathBuf,
     /// Vstupní XML soubory bible nebo písní
     input_files: Vec<PathBuf>,
-    /// Určuje, jak nakládat s biblemi/písněmi, které již v databázi existují.
-    /// Ve výchozím nastavení jsou takové vstupy ignorovány (v databázi jsou zachována
-    /// původní data), pokud je specifikována tato vlaječka, budou namísto toho
-    /// existující záznamy přepsány.
-    #[arg(long, short)]
-    overwrite_records: bool,
+    /// Určuje, jak nakládat s písněmi, které již v databázi existují.
+    #[arg(long, short, default_value_t = SameNameTreatment::Skip)]
+    same_name: SameNameTreatment,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum SameNameTreatment {
+    /// Přeskočit stejně pojmenované písně
+    Skip,
+    /// Přepíše již uloženou píseň nově načtenou písní
+    Overwrite,
+    /// Přejmenuje novou píseň a uloží ji pod jménem `originální název N`,
+    /// kde `N` je nejmenší kladné celé číslo, pro které je dané jméno volné.
+    Rename,
+}
+
+impl std::fmt::Display for SameNameTreatment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SameNameTreatment::Skip => f.write_str("skip"),
+            SameNameTreatment::Overwrite => f.write_str("overwrite "),
+            SameNameTreatment::Rename => f.write_str("rename "),
+        }
+    }
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,17 +88,38 @@ async fn run(config: Cli) -> Result<()> {
             ParseKind::Song => {
                 let res = Song::parse_from_xml_file(&input_file);
                 match res {
-                    Ok(song) => {
-                        if config.overwrite_records
-                            && let Ok(id) = Song::exists_in_db(&song.title, &db_pool).await
-                        {
-                            // Pokud píseň existuje, nejdříve ji vymažeme a uložíme novou
-                            Song::delete_from_db(id, &db_pool).await?;
-                            println!("[INFO]: Přepisuju píseň '{}'", &song.title);
+                    Ok(mut song) => {
+                        let song_in_db_id = Song::exists_in_db(&song.title, &db_pool)
+                            .await
+                            .context("Nelze ověřit přítomnost písně v databázi")?;
+                        if song_in_db_id.is_some() {
+                            match config.same_name {
+                                SameNameTreatment::Skip => {
+                                    println!("[INFO]: Přeskakuji píseň '{}'", &song.title);
+                                    continue; // Přejdi na další vstupní soubor
+                                }
+                                SameNameTreatment::Overwrite => {
+                                    Song::delete_from_db(song_in_db_id.unwrap(), &db_pool).await?;
+                                    println!("[INFO]: Přepisuju píseň '{}'", &song.title);
+                                }
+                                SameNameTreatment::Rename => {
+                                    let mut number = 1;
+                                    song.title = format!("{} {}", song.title, number);
+                                    while Song::exists_in_db(&song.title, &db_pool).await?.is_some()
+                                    {
+                                        number += 1;
+                                        song.title = format!("{} {}", song.title, number);
+                                    }
+                                    println!("[INFO]: Přejmenovávám na '{}'", song.title);
+                                }
+                            }
                         }
 
                         match song.save_to_db(&db_pool).await {
-                            Ok(_) => successes += 1,
+                            Ok(_) => {
+                                println!("[INFO]: Ukládám píseň '{}'", song.title);
+                                successes += 1;
+                            }
                             Err(err) => {
                                 eprintln!("[ERROR]: {:?}", err);
                                 fails += 1;
@@ -114,9 +153,11 @@ async fn main() -> Result<()> {
     let config = Cli::parse();
 
     if config.input_files.is_empty() {
-        bail!("Nebyly zadány žádné vstupní soubory k parsování, končím");
-    } else if config.overwrite_records && config.parse_kind == ParseKind::Bible {
-        eprintln!("[WARN]: Překlady Bible se nemění, volba overwrite, nebude mít žádný efekt");
+        anyhow::bail!("Nebyly zadány žádné vstupní soubory k parsování, končím");
+    } else if config.parse_kind == ParseKind::Bible && config.same_name != SameNameTreatment::Skip {
+        eprintln!(
+            "[WARN]: Není implementováno nahrazování překladů, budu se chovat, jako kdybys zadal --same-name skip"
+        );
     }
 
     run(config).await
