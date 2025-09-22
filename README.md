@@ -23,7 +23,7 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 - [X] Zpřijemni manuální bible picker
   - Když vyberu knihu/kapitolu `from`, mělo by ji to nastavit i pro `to`, většinou vybírám verše ze stejné kapitoly
 - [X] Náhled pro výběr písní
-- [ ] Náhled pro prezentér
+- [X] Náhled pro prezentér
 - [ ] Možnost přidávání písní/veršů za běhu
 - [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
 - [X] Přidat zamrznutí/začernění slajdu

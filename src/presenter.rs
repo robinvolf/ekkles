@@ -1,10 +1,14 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result, anyhow};
 use ekkles_data::playlist::PlaylistItem;
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
 use iced::keyboard::{Key, key};
+use iced::time::every;
 use iced::widget::button::danger;
-use iced::widget::{Space, button, column, container, radio, row, scrollable, slider, text};
-use iced::window::{Id, Settings};
+use iced::widget::image::Handle;
+use iced::widget::{Image, Space, button, column, container, radio, row, scrollable, slider, text};
+use iced::window::{Id, Screenshot, Settings, screenshot};
 use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
 use log::{debug, trace};
 use sqlx::Sqlite;
@@ -37,6 +41,9 @@ const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
 const MODE_FREEZE_KEY: &str = "f";
 const MODE_NORMAL_KEY: &str = "n";
 const MODE_BLANK_KEY: &str = "b";
+
+/// Prodleva mezi jednotlivými screenshoty prezentované obrazovky pro náhled
+const PREVIEW_PERIOD: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Slide {
@@ -204,6 +211,10 @@ pub enum Message {
     FreezePresentation,
     /// Změna multiplikátoru velikosti textu na snímku
     TextSizeMultiplierChanged(u8),
+    /// Měl by se updatovat náhled
+    UpdatePreview,
+    /// Nový náhled vytvořen
+    PreviewUpdated(Screenshot),
 }
 
 impl From<Message> for crate::Message {
@@ -226,6 +237,8 @@ pub struct Presenter {
     /// intervalu `[TEXT_SIZE_MULTIPLIER_MIN]` až [`TEXT_SIZE_MULTIPLIER_MAX`].
     /// Vysvětlení viz: [`TEXT_SIZE_MULTIPLIER_DEFAULT_U8`].
     text_scale: u8,
+    /// Screenshot prezentovaného okna pro náhled v ovládacím okně
+    preview: Option<Screenshot>,
 }
 
 /// Přetvoří `playlist` na vektor slajdů složený z položek vytvořených z jednotlivých
@@ -295,6 +308,7 @@ impl Presenter {
                 mode: PresentationMode::Normal,
                 presentation_window_id: None,
                 text_scale: TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
+                preview: None,
             })
         }
     }
@@ -304,25 +318,36 @@ impl Presenter {
     /// # Klávesy
     /// - Šipky ↑↓ pro posouvání právě promítané položky
     /// - Escape pro ukončení prezentace
+    ///
+    /// # Náhled
+    /// - Každých [`PREVIEW_PERIOD`] bude proveden Screenshot prezentovaného okna,
+    ///   aby se aktualizoval náhled
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        iced::keyboard::on_key_press(|key, modifiers| {
-            trace!("Přišel event z klávesnice: {:?}", (key.clone(), modifiers));
-            match (key.as_ref(), modifiers) {
-                (Key::Named(key::Named::ArrowUp), _) => Some(Message::RequestPrevSlide.into()),
-                (Key::Named(key::Named::ArrowDown), _) => Some(Message::RequestNextSlide.into()),
-                (Key::Named(key::Named::Escape), _) => {
-                    Some(Message::ClosePresentationWindow.into())
+        Subscription::batch([
+            iced::keyboard::on_key_press(|key, modifiers| {
+                trace!("Přišel event z klávesnice: {:?}", (key.clone(), modifiers));
+                match (key.as_ref(), modifiers) {
+                    (Key::Named(key::Named::ArrowUp), _) => Some(Message::RequestPrevSlide.into()),
+                    (Key::Named(key::Named::ArrowDown), _) => {
+                        Some(Message::RequestNextSlide.into())
+                    }
+                    (Key::Named(key::Named::Escape), _) => {
+                        Some(Message::ClosePresentationWindow.into())
+                    }
+                    (Key::Character(MODE_FREEZE_KEY), _) => {
+                        Some(Message::FreezePresentation.into())
+                    }
+                    (Key::Character(MODE_NORMAL_KEY), _) => {
+                        Some(Message::PresentationModeChanged(PresentationMode::Normal).into())
+                    }
+                    (Key::Character(MODE_BLANK_KEY), _) => {
+                        Some(Message::PresentationModeChanged(PresentationMode::Blank).into())
+                    }
+                    _ => None,
                 }
-                (Key::Character(MODE_FREEZE_KEY), _) => Some(Message::FreezePresentation.into()),
-                (Key::Character(MODE_NORMAL_KEY), _) => {
-                    Some(Message::PresentationModeChanged(PresentationMode::Normal).into())
-                }
-                (Key::Character(MODE_BLANK_KEY), _) => {
-                    Some(Message::PresentationModeChanged(PresentationMode::Blank).into())
-                }
-                _ => None,
-            }
-        })
+            }),
+            every(PREVIEW_PERIOD).map(|_| Message::UpdatePreview.into()),
+        ])
     }
 
     pub fn get_presentation_window_id(&self) -> Option<Id> {
@@ -461,14 +486,32 @@ impl Presenter {
         .spacing(10)
         .padding(30);
 
+        let preview = match &self.preview {
+            Some(preview) => {
+                let (width, height) = (preview.size.width, preview.size.height);
+                let pixels = preview.bytes.clone();
+                container(
+                    Image::new(Handle::from_rgba(width, height, pixels))
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::FillPortion(1))
+            }
+            None => container(Space::new(Length::Shrink, Length::Shrink)),
+        };
+
         Into::<Element<Message>>::into(container(
             row![
                 presentation_control
                     .width(Length::FillPortion(1))
                     .height(Length::Fill),
-                scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
-                    .width(Length::FillPortion(2))
-                    .height(Length::Fill),
+                column![
+                    scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
+                        .width(Length::FillPortion(2))
+                        .height(Length::Fill),
+                    preview,
+                ],
                 style_control
                     .width(Length::FillPortion(1))
                     .height(Length::Fill)
@@ -568,6 +611,21 @@ impl Presenter {
                     Message::PresentationModeChanged(PresentationMode::Frozen(current_index))
                         .into(),
                 )
+            }
+            Message::UpdatePreview => match presenter.presentation_window_id {
+                Some(id) => {
+                    trace!("Provádím screenshot prezentovaného okna");
+                    screenshot(id).map(|screenshot| Message::PreviewUpdated(screenshot).into())
+                }
+                None => {
+                    trace!("Ještě neexistuje prezentující okno, nelze vytvořit náhled");
+                    Task::none()
+                }
+            },
+            Message::PreviewUpdated(screenshot) => {
+                trace!("Náhled byl aktualizován");
+                presenter.preview = Some(screenshot);
+                Task::none()
             }
         }
     }
