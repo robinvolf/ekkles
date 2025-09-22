@@ -116,7 +116,7 @@ impl SongPicker {
                     button("Potvrdit")
                         .width(Length::Fill)
                         .height(Length::Shrink)
-                        .on_press(Message::ConfirmSelection)
+                        .on_press_maybe(self.selected.as_ref().map(|_| Message::ConfirmSelection))
                 ]
             ]
             .padding(30)
