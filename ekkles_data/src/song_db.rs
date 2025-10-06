@@ -71,9 +71,9 @@ impl Song {
 
     /// Pokud píseň s názvem `title` v databázi existuje, vrátí její `id`, jinak `None`, pokud se
     /// vystkytne při přístupu do databáze chyba nebo daná píseň neexistuje, vrátí Error.
-    pub async fn exists_in_db(title: &str, pool: &SqlitePool) -> Result<Option<i64>> {
+    pub async fn exists_in_db(conn: &mut SqliteConnection, title: &str) -> Result<Option<i64>> {
         query!("SELECT id FROM songs WHERE title = $1", title)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await
             .with_context(|| format!("Píseň s názvem '{}' nebyla nalezena", title))
             .map(|record| record.map(|r| r.id.unwrap()))

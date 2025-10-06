@@ -29,8 +29,7 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 - [X] Přidat zamrznutí/začernění slajdu
 - [ ] Přidat editor písní
 - [X] Rozhodnout, jak řešit vyhledání databáze, config
-  - [ ] Rozhodnout co vůbec konfigurovat
-- [ ] Prozkoumat modální okýnka (vanilla pomocí stack/overlay nebo nějaká [knihovnička](https://github.com/pml68/iced_dialog))
+- [ ] Rozšiř konfiguraci (hardcoded věci), konfigurák, CLI, proměnné prostředí
 - [ ] Začleň ikonky pomocí custom fontů přes [iced_fonts](https://github.com/Redhawk18/iced_fonts)
 - [ ] Implementuj drag-and-drop pro editor playlistů
   - Problémové, používám moc novou iced verzi (custom knihovničky nefungujou), pravděpodobně lepší počkat, než bude tato funkcionalita přímo v iced

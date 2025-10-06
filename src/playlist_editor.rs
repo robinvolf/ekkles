@@ -16,16 +16,14 @@ use tokio::sync::Mutex;
 use crate::{
     Ekkles, Screen,
     bible_picker::BiblePicker,
-    components::{TopButtonsMessage, TopButtonsPickedSection, playlist_item_styles, top_buttons},
-    pick_playlist::{self, PlaylistPicker},
+    components::playlist_item_styles,
+    pick_editor::{self, EditorPicker},
     presenter::Presenter,
     song_picker::SongPicker,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    TopButtonsPlaylist,
-    TopButtonsSongs,
     LoadSongNameCache,
     SongNameCacheLoaded(Vec<(i64, String)>),
     SavePlaylist,
@@ -51,15 +49,6 @@ pub enum Message {
 impl From<Message> for crate::Message {
     fn from(value: Message) -> Self {
         crate::Message::PlaylistEditor(value)
-    }
-}
-
-impl From<TopButtonsMessage> for Message {
-    fn from(value: TopButtonsMessage) -> Self {
-        match value {
-            TopButtonsMessage::Playlists => Message::TopButtonsPlaylist,
-            TopButtonsMessage::Songs => Message::TopButtonsSongs,
-        }
     }
 }
 
@@ -184,7 +173,6 @@ impl PlaylistEditor {
         };
 
         Into::<Element<Message>>::into(column![
-            top_buttons(TopButtonsPickedSection::Playlists).map(|msg| msg.into()),
             container(row![
                 column![
                     column![
@@ -394,10 +382,6 @@ impl PlaylistEditor {
                 editor.new_playlist_err_msg = err_msg;
                 Task::none()
             }
-            Message::TopButtonsPlaylist => todo!(),
-            Message::TopButtonsSongs => {
-                todo!("Ještě neumím editovat písně")
-            }
             Message::NewPlaylistNameChanged(input) => {
                 trace!("Změnil se nový název playlistu: {input}");
                 editor.new_playlist_name = input;
@@ -426,9 +410,9 @@ impl PlaylistEditor {
                 )
             }
             Message::ReturnToPlaylistPicker => {
-                state.screen = Screen::PickPlaylist(PlaylistPicker::default());
+                state.screen = Screen::PickEditor(EditorPicker::default());
                 Task::done(crate::Message::PlaylistPicker(
-                    pick_playlist::Message::LoadPlaylists,
+                    pick_editor::Message::LoadPlaylists,
                 ))
             }
             Message::SaveAndExit => {
@@ -453,7 +437,7 @@ impl PlaylistEditor {
                             match res {
                                 Ok(_) => Task::batch([
                                     Task::done(Message::ReturnToPlaylistPicker.into()),
-                                    Task::done(crate::pick_playlist::Message::LoadPlaylists.into()),
+                                    Task::done(crate::pick_editor::Message::LoadPlaylists.into()),
                                 ]),
                                 Err(e) => Task::done(crate::Message::FatalErrorOccured(format!(
                                     "{:?}",
@@ -466,7 +450,7 @@ impl PlaylistEditor {
                         debug!("Playlist nepotřebuje uložit, vracím se rovnou na výběr playlistů");
                         Task::batch([
                             Task::done(Message::ReturnToPlaylistPicker.into()),
-                            Task::done(crate::pick_playlist::Message::LoadPlaylists.into()),
+                            Task::done(crate::pick_editor::Message::LoadPlaylists.into()),
                         ])
                     }
                 }

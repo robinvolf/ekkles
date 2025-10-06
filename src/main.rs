@@ -9,9 +9,10 @@ mod bible_picker;
 mod components;
 mod config;
 mod error_screen;
-mod pick_playlist;
+mod pick_editor;
 mod playlist_editor;
 mod presenter;
+mod song_editor;
 mod song_picker;
 mod update;
 
@@ -21,7 +22,7 @@ const PROGRAM_NAME: &str = "Ekkles";
 /// Jednotlivé obrazovky aplikace
 enum Screen {
     /// Vybírání playlistu k editaci
-    PickPlaylist(pick_playlist::PlaylistPicker),
+    PickEditor(pick_editor::EditorPicker),
     /// Nastala nezotavitelná chyba
     ErrorOccurred(String),
     /// Editování playlistu
@@ -49,7 +50,7 @@ enum Message {
     /// Bylo zavřeno hlavní okno, měli bychom ukončit prezentování
     WindowClosed(Id),
     /// Message z obrazovky "PlaylistPicker"
-    PlaylistPicker(pick_playlist::Message),
+    PlaylistPicker(pick_editor::Message),
     /// Message z obrazovky "PlaylistEditor"
     PlaylistEditor(playlist_editor::Message),
     /// Message z obrazovky "SongPicker"
@@ -58,6 +59,8 @@ enum Message {
     BiblePicker(bible_picker::Message),
     /// Message z obrazovky "Presenter"
     Presenter(presenter::Message),
+    /// Message z obrazovky SongEditor
+    SongEditor(song_editor::Message),
     /// Nastala nezotavitelná chyba, měli bychom ukončit program. (ukládat pouhou String
     /// reprezentaci je ošklivé, ale [`anyhow::Error`] neimplementuje [`Clone`]
     /// a [`Message`] musí být `Clone`)
@@ -85,7 +88,7 @@ impl Ekkles {
             Self {
                 main_window_id: id,
                 db,
-                screen: Screen::PickPlaylist(pick_playlist::PlaylistPicker::new()),
+                screen: Screen::PickEditor(pick_editor::EditorPicker::new()),
             },
             open_window_task.map(|id| Message::WindowOpened(id)),
         )
@@ -95,7 +98,7 @@ impl Ekkles {
         let window_closed_events = iced::window::close_events().map(|id| Message::WindowClosed(id));
 
         let screen_specific_events = match &self.screen {
-            Screen::PickPlaylist(_) => Subscription::none(),
+            Screen::PickEditor(_) => Subscription::none(),
             Screen::ErrorOccurred(_) => Subscription::none(),
             Screen::EditPlaylist(_) => Subscription::none(),
             Screen::PickSong(_) => Subscription::none(),
@@ -109,7 +112,7 @@ impl Ekkles {
     fn view(&self, window_id: Id) -> Element<Message> {
         if window_id == self.main_window_id {
             match &self.screen {
-                Screen::PickPlaylist(picker) => picker.view().map(|msg| msg.into()),
+                Screen::PickEditor(picker) => picker.view().map(|msg| msg.into()),
                 Screen::ErrorOccurred(err) => error_screen::view(err),
                 Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
                 Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
