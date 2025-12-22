@@ -3,11 +3,11 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use ekkles_data::playlist::PlaylistItem;
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
-use iced::keyboard::{Key, key};
+use iced::keyboard::{Event, Key, key};
 use iced::time::every;
 use iced::widget::button::danger;
 use iced::widget::image::Handle;
-use iced::widget::{Image, Space, button, column, container, radio, row, scrollable, slider, text};
+use iced::widget::{Image, button, column, container, radio, row, scrollable, slider, space, text};
 use iced::window::{Id, Screenshot, Settings, screenshot};
 use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
 use log::{debug, trace};
@@ -324,26 +324,32 @@ impl Presenter {
     ///   aby se aktualizoval náhled
     pub fn subscription(&self) -> Subscription<crate::Message> {
         Subscription::batch([
-            iced::keyboard::on_key_press(|key, modifiers| {
-                trace!("Přišel event z klávesnice: {:?}", (key.clone(), modifiers));
-                match (key.as_ref(), modifiers) {
-                    (Key::Named(key::Named::ArrowUp), _) => Some(Message::RequestPrevSlide.into()),
-                    (Key::Named(key::Named::ArrowDown), _) => {
-                        Some(Message::RequestNextSlide.into())
+            iced::keyboard::listen().filter_map(|event| {
+                if let Event::KeyPressed { key, modifiers, .. } = event {
+                    trace!("Přišel event z klávesnice: {:?}", (key.clone(), modifiers));
+                    match (key.as_ref(), modifiers) {
+                        (Key::Named(key::Named::ArrowUp), _) => {
+                            Some(Message::RequestPrevSlide.into())
+                        }
+                        (Key::Named(key::Named::ArrowDown), _) => {
+                            Some(Message::RequestNextSlide.into())
+                        }
+                        (Key::Named(key::Named::Escape), _) => {
+                            Some(Message::ClosePresentationWindow.into())
+                        }
+                        (Key::Character(MODE_FREEZE_KEY), _) => {
+                            Some(Message::FreezePresentation.into())
+                        }
+                        (Key::Character(MODE_NORMAL_KEY), _) => {
+                            Some(Message::PresentationModeChanged(PresentationMode::Normal).into())
+                        }
+                        (Key::Character(MODE_BLANK_KEY), _) => {
+                            Some(Message::PresentationModeChanged(PresentationMode::Blank).into())
+                        }
+                        _ => None,
                     }
-                    (Key::Named(key::Named::Escape), _) => {
-                        Some(Message::ClosePresentationWindow.into())
-                    }
-                    (Key::Character(MODE_FREEZE_KEY), _) => {
-                        Some(Message::FreezePresentation.into())
-                    }
-                    (Key::Character(MODE_NORMAL_KEY), _) => {
-                        Some(Message::PresentationModeChanged(PresentationMode::Normal).into())
-                    }
-                    (Key::Character(MODE_BLANK_KEY), _) => {
-                        Some(Message::PresentationModeChanged(PresentationMode::Blank).into())
-                    }
-                    _ => None,
+                } else {
+                    None
                 }
             }),
             every(PREVIEW_PERIOD).map(|_| Message::UpdatePreview.into()),
@@ -446,7 +452,7 @@ impl Presenter {
                 Some(self.mode),
                 Message::PresentationModeChanged
             ),
-            Space::with_height(Length::Fixed(30.0)),
+            space().height(Length::Fixed(30.0)),
             text("Škálování velikosti textu"),
             row![
                 slider(
@@ -477,7 +483,7 @@ impl Presenter {
                 } else {
                     Some(Message::RequestNextSlide)
                 }),
-            Space::with_height(Length::Fixed(30.0)),
+            space().height(Length::Fixed(30.0)),
             button("Ukončit prezentaci (ESC)")
                 .width(Length::Fill)
                 .style(danger)
@@ -489,7 +495,7 @@ impl Presenter {
         let preview = match &self.preview {
             Some(preview) => {
                 let (width, height) = (preview.size.width, preview.size.height);
-                let pixels = preview.bytes.clone();
+                let pixels = preview.rgba.clone();
                 container(
                     Image::new(Handle::from_rgba(width, height, pixels))
                         .width(Length::Fill)
@@ -498,7 +504,7 @@ impl Presenter {
                 .width(Length::Fill)
                 .height(Length::FillPortion(1))
             }
-            None => container(Space::new(Length::Shrink, Length::Shrink)),
+            None => container(space().height(Length::Shrink).width(Length::Shrink)),
         };
 
         Into::<Element<Message>>::into(container(
@@ -651,7 +657,7 @@ fn normalize_text_multiplier(value: u8) -> f32 {
 
 /// Vytvoří prázdný slide
 fn blank_slide() -> Element<'static, Message> {
-    container(Space::new(Length::Fill, Length::Fill))
+    container(space().height(Length::Fill).width(Length::Fill))
         .style(black_background)
         .into()
 }

@@ -89,7 +89,11 @@ async fn run(config: Cli) -> Result<()> {
                 let res = Song::parse_from_xml_file(&input_file);
                 match res {
                     Ok(mut song) => {
-                        let song_in_db_id = Song::exists_in_db(&song.title, &db_pool)
+                        let mut conn = db_pool
+                            .acquire()
+                            .await
+                            .context("Nelze získat připojení k databázi")?;
+                        let song_in_db_id = Song::exists_in_db(&mut conn, &song.title)
                             .await
                             .context("Nelze ověřit přítomnost písně v databázi")?;
                         if song_in_db_id.is_some() {
@@ -105,7 +109,9 @@ async fn run(config: Cli) -> Result<()> {
                                 SameNameTreatment::Rename => {
                                     let mut number = 1;
                                     song.title = format!("{} {}", song.title, number);
-                                    while Song::exists_in_db(&song.title, &db_pool).await?.is_some()
+                                    while Song::exists_in_db(&mut conn, &song.title)
+                                        .await?
+                                        .is_some()
                                     {
                                         number += 1;
                                         song.title = format!("{} {}", song.title, number);

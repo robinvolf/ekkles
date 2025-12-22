@@ -11,8 +11,7 @@ use ekkles_data::{
 use iced::{
     Alignment, Element, Length, Padding, Task,
     widget::{
-        self, button, column, container, pick_list, row, scrollable, text, text_input,
-        vertical_space,
+        self, button, column, container, pick_list, row, scrollable, space, text, text_input,
     },
 };
 use log::{debug, trace};
@@ -200,7 +199,7 @@ impl BiblePicker {
                     container(text(preview_text)).padding(Padding::ZERO.right(10)), // Padding, aby scrollbar nepřekrýval text
                 ))
             }
-            None => container(vertical_space()),
+            None => container(space().height(Length::Fill)),
         };
 
         let submit_button = column![

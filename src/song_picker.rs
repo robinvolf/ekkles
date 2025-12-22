@@ -5,8 +5,7 @@ use ekkles_data::{Song, playlist::PlaylistMetadata};
 use iced::{
     Alignment, Element, Length, Task,
     widget::{
-        Container, Space, button, column, combo_box, container, horizontal_rule, row, scrollable,
-        text,
+        Container, Space, button, column, combo_box, container, row, rule, scrollable, space, text,
     },
 };
 use log::debug;
@@ -97,7 +96,7 @@ impl SongPicker {
             .unwrap_or(container(text("Načítám písně ...")));
 
         let preview = match &self.preview {
-            Preview::Empty => container(Space::new(Length::Shrink, Length::Shrink)),
+            Preview::Empty => container(space().height(Length::Shrink).width(Length::Shrink)),
             Preview::Loading(_) => container(text("Načítám náhled ...")).center(Length::Fill),
             Preview::Loaded(song) => song_preview(song),
         };
@@ -203,7 +202,7 @@ fn song_preview(song: &Song) -> Container<'static, Message> {
 
     container(column![
         text(song.title.clone()).center(),
-        horizontal_rule(2),
+        rule::horizontal(2),
         container(scrollable(text(lyrics).align_x(Alignment::Center))).center(Length::Fill),
     ])
 }
