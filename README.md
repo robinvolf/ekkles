@@ -4,37 +4,21 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
 ## TODO
 
-- [X] CLI utilitka pro import písní a biblí do SQLite databáze
-  - Jediný problém tu budou async funkce, musí se tam dát tokio runtime
-- [X] Začít pracovat na GUI Ekklesu, vůbec zjistit jak rozumně udělat víc oken/přechody mezi nimi
-- [X] Datový model pro playlist, aby pak šel z GUI ukládat, načítat, editovat (CRUD)
-- [X] Přidat možnost smazat playlist
-  - [X] Dodělat na backendu
-- [X] Napsat testy pro backend
-- [X] Zjistit, jestli nejdou nějak dobře psát testy pro Iced
-  - Eště nejdou, ve verzi 0.14 by měl přistát "test recorder", který by měl umožnit testovat GUI
-- [X] Zprovozni přidávání písní
-- [X] Napsat picker písní
-- [X] Zprovozni přidávání pasáží
-- [X] Napsat picker pasáží
-- [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
-- [X] Prozkoumat možnost klávesových zkratek a přidat je na vhodná místa
-  - [X] Prezentér (ovládání prezentovaného slajdu šipkama)
-- [X] Zpřijemni manuální bible picker
-  - Když vyberu knihu/kapitolu `from`, mělo by ji to nastavit i pro `to`, většinou vybírám verše ze stejné kapitoly
-- [X] Náhled pro výběr písní
-- [X] Náhled pro prezentér
-- [ ] Možnost přidávání písní/veršů za běhu
-- [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
-- [X] Přidat zamrznutí/začernění slajdu
+- [ ] Přemigruj iced na verzi 0.14
+- [ ] Využij senzory pro lazy loading. Wrapni v nějakém enumu start/loading/loaded
+  - Na start to hodí senzor, který začne načítat data z databáze, loading jen zobrazí, že se načítá a loaded bude načteno - takto logika načítání věcí připadne vždy na obrazovku, kde se to děje
+    - Je možné to nějak generalizovat a vytvořit z toho samostatnou komponentu
+  - [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
+  - [ ] Sniž závislost na mezi jednotlivými obrazovkami pomocí [senzorů](https://docs.iced.rs/iced/widget/sensor/struct.Sensor.html), které můžou při prvním načtení obrazovky začít načítat věci z databáze
+  - [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
+- [ ] Předělej obrazovky pro vybírání věcí, aby to byly jen komponenty, které se dají využít buď pomocí stack na jedné z obrazovek (jako v opensongu to jen bude navrchu) nebo se dají dát na separátní obrazovku (např. výběr playlistu)
+  - [ ] Možnost přidávání písní/veršů za běhu
 - [ ] Přidat editor písní
-- [X] Rozhodnout, jak řešit vyhledání databáze, config
 - [ ] Rozšiř konfiguraci (hardcoded věci), konfigurák, CLI, proměnné prostředí
 - [ ] Začleň ikonky pomocí custom fontů přes [iced_fonts](https://github.com/Redhawk18/iced_fonts)
 - [ ] Implementuj drag-and-drop pro editor playlistů
   - Problémové, používám moc novou iced verzi (custom knihovničky nefungujou), pravděpodobně lepší počkat, než bude tato funkcionalita přímo v iced
 - [ ] Lze optimalizovat některá místa, kde se mění obrazovka a místo klonování věcí lze použít [replace_with](https://docs.rs/replace_with/latest/replace_with/)
-- [ ] Sniž závislost na mezi jednotlivými obrazovkami pomocí [senzorů](https://docs.iced.rs/iced/widget/sensor/struct.Sensor.html), které můžou při prvním načtení obrazovky začít načítat věci z databáze
 
 ## Bugísky
 Žádné známé, hurá!
