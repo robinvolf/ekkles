@@ -9,11 +9,11 @@ mod bible_picker;
 mod components;
 mod config;
 mod error_screen;
-mod pick_editor;
 mod playlist_editor;
 mod presenter;
 mod song_editor;
 mod song_picker;
+mod start_screen;
 mod update;
 
 const PROGRAM_NAME: &str = "Ekkles";
@@ -22,7 +22,7 @@ const PROGRAM_NAME: &str = "Ekkles";
 /// Jednotlivé obrazovky aplikace
 enum Screen {
     /// Vybírání playlistu k editaci
-    PickEditor(pick_editor::EditorPicker),
+    PickEditor(start_screen::StartScreen),
     /// Nastala nezotavitelná chyba
     ErrorOccurred(String),
     /// Editování playlistu
@@ -50,7 +50,7 @@ enum Message {
     /// Bylo zavřeno hlavní okno, měli bychom ukončit prezentování
     WindowClosed(Id),
     /// Message z obrazovky "PlaylistPicker"
-    PlaylistPicker(pick_editor::Message),
+    PlaylistPicker(start_screen::Message),
     /// Message z obrazovky "PlaylistEditor"
     PlaylistEditor(playlist_editor::Message),
     /// Message z obrazovky "SongPicker"
@@ -88,7 +88,7 @@ impl Ekkles {
             Self {
                 main_window_id: id,
                 db,
-                screen: Screen::PickEditor(pick_editor::EditorPicker::new()),
+                screen: Screen::PickEditor(start_screen::StartScreen::new()),
             },
             open_window_task.map(|id| Message::WindowOpened(id)),
         )

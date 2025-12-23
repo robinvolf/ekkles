@@ -1,83 +1,98 @@
 use iced::{
-    Element, Length, Task,
-    task::Handle,
-    widget::{Space, button, container, row, text},
+    Element, Length,
+    widget::{container, sensor, text},
 };
-use log::warn;
-
-use crate::Message;
 
 pub mod playlist_item_styles;
 
-#[derive(Debug, Clone, Copy)]
-pub enum TopButtonsMessage {
-    Playlists,
-    Songs,
-}
-
-pub enum TopButtonsPickedSection {
-    Songs,
-    Playlists,
-}
-
-pub fn top_buttons(picked: TopButtonsPickedSection) -> Element<'static, TopButtonsMessage> {
-    let (song_msg, playlist_msg) = match picked {
-        TopButtonsPickedSection::Songs => (None, Some(TopButtonsMessage::Playlists)),
-        TopButtonsPickedSection::Playlists => (Some(TopButtonsMessage::Songs), None),
-    };
-    row![
-        button("Písně")
-            .on_press_maybe(song_msg)
-            .width(Length::FillPortion(1)),
-        button("Playlisty")
-            .on_press_maybe(playlist_msg)
-            .width(Length::FillPortion(1))
-    ]
-    .width(Length::Fill)
-    .into()
-}
-
-/// Preview pro generický typ T
 #[derive(Debug)]
-pub enum Preview<T> {
-    Empty,
-    Loading(Handle),
+pub struct LazyLoadable<T, M>
+where
+    M: Clone,
+{
+    state: LazyLoadableState<T>,
+    msg_start_loading: M,
+}
+
+impl<T, M> LazyLoadable<T, M>
+where
+    M: Clone,
+{
+    pub fn new(msg_start_loading: M) -> Self {
+        LazyLoadable {
+            state: LazyLoadableState::Cold,
+            msg_start_loading,
+        }
+    }
+
+    pub fn as_loaded(&self) -> Option<&T> {
+        self.state.as_loaded()
+    }
+
+    pub fn view_if_not_loaded(&self) -> Option<impl Into<Element<M>>> {
+        let not_loaded_content: container::Container<'_, M, iced::Theme, _> =
+            container(text("Načítám obsah z databáze"))
+                .center(Length::Fill)
+                .style(container::secondary);
+        match &self.state {
+            LazyLoadableState::Cold => Some(
+                sensor(not_loaded_content)
+                    .on_show(|_| self.msg_start_loading.clone())
+                    .into(),
+            ),
+            LazyLoadableState::Loading => Some(Into::<Element<M>>::into(not_loaded_content)),
+            LazyLoadableState::Loaded(_) => None,
+        }
+    }
+
+    pub fn start_loading(&mut self) {
+        assert!(
+            self.state.is_cold(),
+            "start_loading() musí být zavolána na LazyLoadable ve stavu Cold"
+        );
+
+        self.state = LazyLoadableState::Loading
+    }
+
+    pub fn finish_loading(&mut self, result: T) {
+        assert!(
+            self.state.is_loading(),
+            "finish_loading() musí být zavolána na LazyLoadable ve stavu Loading"
+        );
+
+        self.state = LazyLoadableState::Loaded(result)
+    }
+}
+
+#[derive(Debug)]
+enum LazyLoadableState<T> {
+    Cold,
+    Loading,
     Loaded(T),
 }
 
-impl<T> Preview<T> {
-    pub fn new() -> Self {
-        Self::Empty
+impl<T> LazyLoadableState<T> {
+    /// Returns `true` if the lazy loadable state is [`Cold`].
+    ///
+    /// [`Cold`]: LazyLoadableState::Cold
+    #[must_use]
+    fn is_cold(&self) -> bool {
+        matches!(self, Self::Cold)
     }
 
-    /// Začne načítat dané preview.
-    /// Vrátí Task, který reprezentuje načtení zdroje.
-    /// - Pokud se Preview již načítá, původní task je ukončen (abort) a začne se načítat nový
-    pub fn load<O: 'static>(&mut self, fut: impl Future<Output = O> + Send + 'static) -> Task<O> {
-        if let Preview::Loading(handle) = self {
-            handle.abort();
-        }
-
-        let (task, handle) = Task::future(fut).abortable();
-
-        *self = Preview::Loading(handle);
-
-        task
+    /// Returns `true` if the lazy loadable state is [`Loading`].
+    ///
+    /// [`Loading`]: LazyLoadableState::Loading
+    #[must_use]
+    fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading)
     }
 
-    /// Označí preview za načtené.
-    pub fn loaded(&mut self, previewed: T) {
-        if let Preview::Loading(_) = self {
-            *self = Preview::Loaded(previewed);
+    fn as_loaded(&self) -> Option<&T> {
+        if let Self::Loaded(v) = self {
+            Some(v)
         } else {
-            warn!(
-                "Přišly data pro Preview, které se nenačítalo, může být vlivem zpoždění, ignoruju"
-            );
+            None
         }
-    }
-
-    /// Vrátí Preview do původního (prázdného stavu)
-    pub fn reset(&mut self) {
-        *self = Preview::Empty
     }
 }

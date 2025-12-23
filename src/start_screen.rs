@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use crate::{Ekkles, Screen, playlist_editor};
+use crate::{Ekkles, Screen, components::LazyLoadable, playlist_editor};
 use anyhow::Context;
 use ekkles_data::{
     Song,
@@ -8,14 +8,14 @@ use ekkles_data::{
 };
 use iced::{
     Element, Length, Task,
-    widget::{button, column, combo_box, container, row, text, text::danger, text_input},
+    widget::{button, column, combo_box, container, row, space, text, text::danger, text_input},
 };
 use log::{debug, trace};
 
 #[derive(Debug)]
-pub struct EditorPicker {
-    playlists: Option<combo_box::State<PlaylistPickerItem>>,
-    songs: Option<combo_box::State<PlaylistPickerItem>>,
+pub struct StartScreen {
+    playlists: LazyLoadable<combo_box::State<StartScreenPickerBoxItem>, Message>,
+    songs: LazyLoadable<combo_box::State<StartScreenPickerBoxItem>, Message>,
     new_name: String,
     err_msg: Option<String>,
     tab: Tab,
@@ -28,12 +28,12 @@ enum Tab {
 }
 
 #[derive(Debug, Clone)]
-pub struct PlaylistPickerItem {
+pub struct StartScreenPickerBoxItem {
     id: i64,
     name: String,
 }
 
-impl Display for PlaylistPickerItem {
+impl Display for StartScreenPickerBoxItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)
     }
@@ -83,12 +83,14 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             Task::none()
         }
         Message::PlaylistsLoaded(playlists) => {
-            debug!("Načetlo se {} playlisty", playlists.len());
+            debug!("Načetlo se {} playlistů", playlists.len());
             let options = playlists
                 .into_iter()
-                .map(|(id, name)| PlaylistPickerItem { id, name })
+                .map(|(id, name)| StartScreenPickerBoxItem { id, name })
                 .collect();
-            picker.playlists = Some(iced::widget::combo_box::State::new(options));
+            picker
+                .playlists
+                .finish_loading(combo_box::State::new(options));
             Task::none()
         }
         Message::PickedPlaylist(id) => {
@@ -188,6 +190,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
         Message::LoadPlaylists => {
             debug!("Načítám seznam playlistů");
             // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
+            picker.playlists.start_loading();
             let conn = state.db.acquire();
             Task::perform(
                 async move {
@@ -202,6 +205,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
         }
         Message::LoadSongs => {
             debug!("Načítám seznam písní");
+            picker.songs.start_loading();
             let conn = state.db.acquire();
             Task::perform(
                 async move {
@@ -218,9 +222,9 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             debug!("Načetlo se {} písní", songs.len());
             let options = songs
                 .into_iter()
-                .map(|(id, name)| PlaylistPickerItem { id, name })
+                .map(|(id, name)| StartScreenPickerBoxItem { id, name })
                 .collect();
-            picker.playlists = Some(iced::widget::combo_box::State::new(options));
+            picker.songs.finish_loading(combo_box::State::new(options));
             Task::none()
         }
         Message::PickedSong(id) => {
@@ -249,11 +253,11 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
     }
 }
 
-impl EditorPicker {
+impl StartScreen {
     pub fn new() -> Self {
         Self {
-            playlists: None,
-            songs: None,
+            playlists: LazyLoadable::new(Message::LoadPlaylists),
+            songs: LazyLoadable::new(Message::LoadSongs),
             new_name: String::from(""),
             err_msg: None,
             tab: Tab::Playlist,
@@ -265,7 +269,6 @@ impl EditorPicker {
             new_name_description,
             pick_existing_description,
             create_new_description,
-            combo_box_loading_text,
             tab_song_msg,
             tab_playlist_msg,
         ) = match self.tab {
@@ -273,7 +276,6 @@ impl EditorPicker {
                 "Název nové písně:",
                 "Vyber píseň",
                 "Nebo vytvoř novou",
-                "Načítám písně z databáze",
                 None,
                 Some(Message::TabPlaylists),
             ),
@@ -281,27 +283,56 @@ impl EditorPicker {
                 "Název nového playlistu:",
                 "Vyber playlist",
                 "Nebo vytvoř nový",
-                "Načítám playlisty z databáze",
                 Some(Message::TabSongs),
                 None,
             ),
         };
 
-        let box_with_playlists: Element<Message> = match (self.tab, &self.playlists, &self.songs) {
-            (Tab::Song, _, Some(songs)) => combo_box(songs, "Název písně", None, |picked| {
-                Message::PickedSong(picked.id)
-            })
-            .into(),
-            (Tab::Playlist, Some(playlists), _) => {
-                combo_box(playlists, "Název playlistu", None, |picked| {
-                    Message::PickedPlaylist(picked.id)
-                })
-                .into()
-            }
-            (Tab::Song, _, None) | (Tab::Playlist, None, _) => text(combo_box_loading_text).into(),
+        let picker_view = match self.tab {
+            Tab::Song => self.songs.view_if_not_loaded(),
+            Tab::Playlist => self.playlists.view_if_not_loaded(),
         };
 
-        column![
+        let central_column = match picker_view {
+            Some(not_loaded_picker) => {
+                column![
+                    space().height(Length::FillPortion(1)),
+                    pick_existing_description,
+                    not_loaded_picker.into(),
+                    space().height(Length::FillPortion(1)),
+                ]
+            }
+            None => column![
+                space().height(Length::FillPortion(1)),
+                pick_existing_description,
+                match self.tab {
+                    Tab::Song => combo_box(
+                        self.songs.as_loaded().unwrap(),
+                        "Název písně",
+                        None,
+                        |picked| { Message::PickedSong(picked.id) }
+                    ),
+                    Tab::Playlist => combo_box(
+                        self.playlists.as_loaded().unwrap(),
+                        "Název playlistu",
+                        None,
+                        |picked| { Message::PickedPlaylist(picked.id) }
+                    ),
+                },
+                create_new_description,
+                row![
+                    text_input(new_name_description, &self.new_name)
+                        .on_input(|input| Message::NewNameChanged(input))
+                        .on_submit(Message::ValidateNewName),
+                    button("Vytvořit!").on_press(Message::ValidateNewName),
+                ]
+                .spacing(10),
+                text(self.err_msg.clone().unwrap_or(String::from(""))).style(danger),
+                space().height(Length::FillPortion(1)),
+            ],
+        };
+
+        Into::<Element<Message>>::into(column![
             row![
                 button("Editovat Píseň")
                     .on_press_maybe(tab_song_msg)
@@ -311,34 +342,21 @@ impl EditorPicker {
                     .width(Length::FillPortion(1)),
             ]
             .width(Length::Fill),
-            container(
-                column![
-                    column![pick_existing_description, box_with_playlists].spacing(10),
-                    column![
-                        create_new_description,
-                        row![
-                            text_input(new_name_description, &self.new_name)
-                                .on_input(|input| Message::NewNameChanged(input))
-                                .on_submit(Message::ValidateNewName),
-                            button("Vytvořit!").on_press(Message::ValidateNewName),
-                        ]
-                        .spacing(10),
-                        text(self.err_msg.clone().unwrap_or(String::from(""))).style(danger)
-                    ]
-                    .spacing(10)
-                ]
-                .spacing(30)
-                .max_width(1000)
-            )
+            container(row![
+                space().width(Length::FillPortion(1)),
+                column![central_column.spacing(10)]
+                    .width(Length::FillPortion(2))
+                    .max_width(1000),
+                space().width(Length::FillPortion(1))
+            ])
             .padding(10)
             .center_x(Length::FillPortion(1))
             .center_y(Length::Fill),
-        ]
-        .into()
+        ])
     }
 }
 
-impl Default for EditorPicker {
+impl Default for StartScreen {
     fn default() -> Self {
         Self::new()
     }

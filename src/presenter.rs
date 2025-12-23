@@ -15,7 +15,7 @@ use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
 
 use crate::components::playlist_item_styles;
-use crate::pick_editor::EditorPicker;
+use crate::start_screen::StartScreen;
 use crate::{Ekkles, Screen};
 
 /// Počet veršů na jeden slajd, proteď konstanta
@@ -565,8 +565,8 @@ impl Presenter {
                 .chain(Task::done(Message::PresentationWindowClosed.into()))
             }
             Message::PresentationWindowClosed => {
-                state.screen = Screen::PickEditor(EditorPicker::new());
-                Task::done(crate::pick_editor::Message::LoadPlaylists.into())
+                state.screen = Screen::PickEditor(StartScreen::new());
+                Task::none()
             }
             Message::OpenPresentationWindow => {
                 debug!("Otevírám prezentační okno");

@@ -1,5 +1,5 @@
 use crate::{Screen, bible_picker, playlist_editor, presenter};
-use crate::{pick_editor, song_picker};
+use crate::{song_picker, start_screen};
 use iced::Task;
 use log::{debug, trace, warn};
 
@@ -10,14 +10,7 @@ impl Ekkles {
         trace!("Přišla zpráva: {:?}", msg);
 
         match (msg, &mut self.screen) {
-            (Message::WindowOpened(id), Screen::PickEditor(_icker)) => {
-                if id == self.main_window_id {
-                    debug!("Hlavní okno otevřeno, načítám playlisty z databáze");
-                    Task::done(Message::PlaylistPicker(pick_editor::Message::LoadPlaylists))
-                } else {
-                    todo!("Jiná okna nejsou implementována")
-                }
-            }
+            (Message::WindowOpened(_), Screen::PickEditor(_)) => Task::none(),
             (Message::WindowClosed(id), _) if id == self.main_window_id => {
                 debug!("Hlavní okno zavřeno, ukončuji aplikaci");
                 iced::exit()
@@ -30,7 +23,9 @@ impl Ekkles {
                 debug!("Zavřeno okno prezentace");
                 Task::done(crate::presenter::Message::PresentationWindowClosed.into())
             }
-            (Message::PlaylistPicker(msg), Screen::PickEditor(_)) => pick_editor::update(self, msg),
+            (Message::PlaylistPicker(msg), Screen::PickEditor(_)) => {
+                start_screen::update(self, msg)
+            }
             (Message::PlaylistEditor(msg), Screen::EditPlaylist(_)) => {
                 playlist_editor::PlaylistEditor::update(self, msg)
             }

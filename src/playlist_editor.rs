@@ -14,12 +14,8 @@ use log::{debug, trace};
 use tokio::sync::Mutex;
 
 use crate::{
-    Ekkles, Screen,
-    bible_picker::BiblePicker,
-    components::playlist_item_styles,
-    pick_editor::{self, EditorPicker},
-    presenter::Presenter,
-    song_picker::SongPicker,
+    Ekkles, Screen, bible_picker::BiblePicker, components::playlist_item_styles,
+    presenter::Presenter, song_picker::SongPicker, start_screen::StartScreen,
 };
 
 #[derive(Debug, Clone)]
@@ -410,10 +406,8 @@ impl PlaylistEditor {
                 )
             }
             Message::ReturnToPlaylistPicker => {
-                state.screen = Screen::PickEditor(EditorPicker::default());
-                Task::done(crate::Message::PlaylistPicker(
-                    pick_editor::Message::LoadPlaylists,
-                ))
+                state.screen = Screen::PickEditor(StartScreen::default());
+                Task::none()
             }
             Message::SaveAndExit => {
                 let playlist_status = { editor.playlist.blocking_lock().get_status() };
@@ -435,10 +429,7 @@ impl PlaylistEditor {
                         .then(|res| {
                             debug!("Playlist uložen, vracím se na výběr playlistů");
                             match res {
-                                Ok(_) => Task::batch([
-                                    Task::done(Message::ReturnToPlaylistPicker.into()),
-                                    Task::done(crate::pick_editor::Message::LoadPlaylists.into()),
-                                ]),
+                                Ok(_) => Task::done(Message::ReturnToPlaylistPicker.into()),
                                 Err(e) => Task::done(crate::Message::FatalErrorOccured(format!(
                                     "{:?}",
                                     e
@@ -448,10 +439,7 @@ impl PlaylistEditor {
                     }
                     PlaylistMetadataStatus::Clean(_) => {
                         debug!("Playlist nepotřebuje uložit, vracím se rovnou na výběr playlistů");
-                        Task::batch([
-                            Task::done(Message::ReturnToPlaylistPicker.into()),
-                            Task::done(crate::pick_editor::Message::LoadPlaylists.into()),
-                        ])
+                        Task::done(Message::ReturnToPlaylistPicker.into())
                     }
                 }
             }

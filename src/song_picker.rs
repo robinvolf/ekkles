@@ -4,14 +4,12 @@ use anyhow::Result;
 use ekkles_data::{Song, playlist::PlaylistMetadata};
 use iced::{
     Alignment, Element, Length, Task,
-    widget::{
-        Container, Space, button, column, combo_box, container, row, rule, scrollable, space, text,
-    },
+    widget::{Container, button, column, combo_box, container, row, rule, scrollable, text},
 };
 use log::debug;
 use sqlx::{Sqlite, pool::PoolConnection};
 
-use crate::{Ekkles, Screen, components::Preview, playlist_editor::PlaylistEditor};
+use crate::{Ekkles, Screen, playlist_editor::PlaylistEditor};
 
 #[derive(Debug, Clone)]
 pub struct SongPickerItem {
@@ -53,7 +51,6 @@ pub struct SongPicker {
     songs: Option<combo_box::State<SongPickerItem>>,
     selected: Option<SongPickerItem>,
     playlist: PlaylistMetadata,
-    preview: Preview<Song>,
 }
 
 impl SongPicker {
@@ -61,7 +58,6 @@ impl SongPicker {
         Self {
             songs: None,
             playlist,
-            preview: Preview::new(),
             selected: None,
         }
     }
@@ -95,12 +91,6 @@ impl SongPicker {
             })
             .unwrap_or(container(text("Načítám písně ...")));
 
-        let preview = match &self.preview {
-            Preview::Empty => container(space().height(Length::Shrink).width(Length::Shrink)),
-            Preview::Loading(_) => container(text("Načítám náhled ...")).center(Length::Fill),
-            Preview::Loaded(song) => song_preview(song),
-        };
-
         Into::<Element<Message>>::into(container(
             row![
                 column![
@@ -111,7 +101,6 @@ impl SongPicker {
                         .height(Length::Shrink)
                 ],
                 column![
-                    preview.height(Length::Fill),
                     button("Potvrdit")
                         .width(Length::Fill)
                         .height(Length::Shrink)
@@ -173,14 +162,15 @@ impl SongPicker {
                     let mut conn = conn.await?;
                     Song::load_from_db(item.id, &mut conn).await
                 };
-                picker.preview.load(fut).map(|res| match res {
-                    Ok(song) => Message::PreviewLoaded(song).into(),
-                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                })
+                // picker.preview.load(fut).map(|res| match res {
+                //     Ok(song) => Message::PreviewLoaded(song).into(),
+                //     Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                // })
+                Task::none()
             }
             Message::PreviewLoaded(song) => {
                 debug!("Načetlo se previw pro píseň {}", song.title);
-                picker.preview.loaded(song);
+                // picker.preview.loaded(song);
                 Task::none()
             }
             Message::SelectSong(selected) => {

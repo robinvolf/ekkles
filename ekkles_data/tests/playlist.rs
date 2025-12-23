@@ -9,7 +9,7 @@ mod common;
 use ekkles_data::{
     Song,
     bible::{
-        self, get_available_translations,
+        get_available_translations,
         indexing::{Book, VerseIndex},
     },
     playlist::{PlaylistItemMetadata, PlaylistMetadata, PlaylistMetadataStatus},
