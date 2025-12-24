@@ -1,6 +1,10 @@
 use std::{collections::HashMap, fmt::Display};
 
-use crate::{Ekkles, Screen, components::LazyLoadable, playlist_editor};
+use crate::{
+    Ekkles, Screen,
+    components::{LazyLoadable, LazyLoadableState},
+    playlist_editor,
+};
 use anyhow::Context;
 use ekkles_data::{
     Song,
@@ -195,6 +199,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             Task::perform(
                 async move {
                     let conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     playlist::get_available(conn).await
                 },
                 |res| match res {
@@ -288,48 +293,45 @@ impl StartScreen {
             ),
         };
 
-        let picker_view = match self.tab {
-            Tab::Song => self.songs.view_if_not_loaded(),
-            Tab::Playlist => self.playlists.view_if_not_loaded(),
+        let data_src = match self.tab {
+            Tab::Song => &self.songs,
+            Tab::Playlist => &self.playlists,
         };
 
-        let central_column = match picker_view {
-            Some(not_loaded_picker) => {
+        let central_column = match data_src.state() {
+            LazyLoadableState::Cold | LazyLoadableState::Loading => {
+                let picker_not_loaded = data_src.view_not_loaded();
                 column![
                     space().height(Length::FillPortion(1)),
-                    pick_existing_description,
-                    not_loaded_picker.into(),
+                    picker_not_loaded.height(Length::Shrink),
                     space().height(Length::FillPortion(1)),
                 ]
             }
-            None => column![
-                space().height(Length::FillPortion(1)),
-                pick_existing_description,
-                match self.tab {
-                    Tab::Song => combo_box(
-                        self.songs.as_loaded().unwrap(),
-                        "Název písně",
-                        None,
-                        |picked| { Message::PickedSong(picked.id) }
-                    ),
-                    Tab::Playlist => combo_box(
-                        self.playlists.as_loaded().unwrap(),
-                        "Název playlistu",
-                        None,
-                        |picked| { Message::PickedPlaylist(picked.id) }
-                    ),
-                },
-                create_new_description,
-                row![
-                    text_input(new_name_description, &self.new_name)
-                        .on_input(|input| Message::NewNameChanged(input))
-                        .on_submit(Message::ValidateNewName),
-                    button("Vytvořit!").on_press(Message::ValidateNewName),
+            LazyLoadableState::Loaded(picker_state) => {
+                let picker_loaded = match self.tab {
+                    Tab::Song => combo_box(picker_state, "Název písně", None, |picked| {
+                        Message::PickedSong(picked.id)
+                    }),
+                    Tab::Playlist => combo_box(picker_state, "Název playlistu", None, |picked| {
+                        Message::PickedPlaylist(picked.id)
+                    }),
+                };
+                column![
+                    space().height(Length::FillPortion(1)),
+                    pick_existing_description,
+                    picker_loaded,
+                    create_new_description,
+                    row![
+                        text_input(new_name_description, &self.new_name)
+                            .on_input(|input| Message::NewNameChanged(input))
+                            .on_submit(Message::ValidateNewName),
+                        button("Vytvořit!").on_press(Message::ValidateNewName),
+                    ]
+                    .spacing(10),
+                    text(self.err_msg.clone().unwrap_or(String::from(""))).style(danger),
+                    space().height(Length::FillPortion(1)),
                 ]
-                .spacing(10),
-                text(self.err_msg.clone().unwrap_or(String::from(""))).style(danger),
-                space().height(Length::FillPortion(1)),
-            ],
+            }
         };
 
         Into::<Element<Message>>::into(column![
@@ -344,8 +346,9 @@ impl StartScreen {
             .width(Length::Fill),
             container(row![
                 space().width(Length::FillPortion(1)),
-                column![central_column.spacing(10)]
-                    .width(Length::FillPortion(2))
+                central_column
+                    .spacing(10)
+                    .width(Length::FillPortion(1))
                     .max_width(1000),
                 space().width(Length::FillPortion(1))
             ])

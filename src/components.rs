@@ -1,6 +1,6 @@
 use iced::{
-    Element, Length,
-    widget::{container, sensor, text},
+    Length,
+    widget::{Container, container, sensor, text},
 };
 
 pub mod playlist_item_styles;
@@ -25,30 +25,31 @@ where
         }
     }
 
-    pub fn as_loaded(&self) -> Option<&T> {
-        self.state.as_loaded()
+    pub fn state(&self) -> &LazyLoadableState<T> {
+        &self.state
     }
 
-    pub fn view_if_not_loaded(&self) -> Option<impl Into<Element<M>>> {
-        let not_loaded_content: container::Container<'_, M, iced::Theme, _> =
-            container(text("Načítám obsah z databáze"))
-                .center(Length::Fill)
-                .style(container::secondary);
+    pub fn view_not_loaded(&self) -> Container<M> {
         match &self.state {
-            LazyLoadableState::Cold => Some(
-                sensor(not_loaded_content)
-                    .on_show(|_| self.msg_start_loading.clone())
-                    .into(),
+            LazyLoadableState::Cold => container(
+                sensor(text("Načítám obsah z databáze"))
+                    .on_show(|_| self.msg_start_loading.clone()),
+            )
+            .center(Length::Fill)
+            .style(container::secondary),
+            LazyLoadableState::Loading => container(text("Načítám obsah z databáze"))
+                .center(Length::Fill)
+                .style(container::secondary),
+            LazyLoadableState::Loaded(_) => panic!(
+                "Metoda view_not_loaded() nemůže být zavoláno na LazyLoadable ve stavu Loaded"
             ),
-            LazyLoadableState::Loading => Some(Into::<Element<M>>::into(not_loaded_content)),
-            LazyLoadableState::Loaded(_) => None,
         }
     }
 
     pub fn start_loading(&mut self) {
         assert!(
             self.state.is_cold(),
-            "start_loading() musí být zavolána na LazyLoadable ve stavu Cold"
+            "Metoda start_loading() musí být zavolána na LazyLoadable ve stavu Cold"
         );
 
         self.state = LazyLoadableState::Loading
@@ -57,7 +58,7 @@ where
     pub fn finish_loading(&mut self, result: T) {
         assert!(
             self.state.is_loading(),
-            "finish_loading() musí být zavolána na LazyLoadable ve stavu Loading"
+            "Metoda finish_loading() musí být zavolána na LazyLoadable ve stavu Loading"
         );
 
         self.state = LazyLoadableState::Loaded(result)
@@ -65,7 +66,7 @@ where
 }
 
 #[derive(Debug)]
-enum LazyLoadableState<T> {
+pub enum LazyLoadableState<T> {
     Cold,
     Loading,
     Loaded(T),
@@ -76,7 +77,7 @@ impl<T> LazyLoadableState<T> {
     ///
     /// [`Cold`]: LazyLoadableState::Cold
     #[must_use]
-    fn is_cold(&self) -> bool {
+    pub fn is_cold(&self) -> bool {
         matches!(self, Self::Cold)
     }
 
@@ -84,11 +85,11 @@ impl<T> LazyLoadableState<T> {
     ///
     /// [`Loading`]: LazyLoadableState::Loading
     #[must_use]
-    fn is_loading(&self) -> bool {
+    pub fn is_loading(&self) -> bool {
         matches!(self, Self::Loading)
     }
 
-    fn as_loaded(&self) -> Option<&T> {
+    pub fn as_loaded(&self) -> Option<&T> {
         if let Self::Loaded(v) = self {
             Some(v)
         } else {
