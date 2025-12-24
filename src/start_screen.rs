@@ -61,8 +61,6 @@ pub enum Message {
     PickedSong(i64),
     NewNameChanged(String),
     ValidateNewName,
-    CreateNew,
-    NameAlreadyTaken,
     EditPlaylist(PlaylistMetadata),
     EditSong(Song),
 }
@@ -122,69 +120,50 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             picker.new_name = input;
             Task::none()
         }
-        Message::CreateNew => {
-            let name = picker.new_name.trim();
-            match picker.tab {
-                Tab::Song => {
-                    debug!("Vytvářím novou píseň \"{}\"", name);
-                    let new_song = Song {
-                        title: name.to_string(),
-                        author: None,
-                        parts: HashMap::new(),
-                        order: Vec::new(),
-                    };
-                    Task::done(Message::EditSong(new_song).into())
-                }
-                Tab::Playlist => {
-                    debug!("Vytvářím nový playlist \"{}\"", name);
-                    let new_playlist = PlaylistMetadata::new(name);
-                    Task::done(Message::EditPlaylist(new_playlist).into())
-                }
-            }
-        }
         Message::ValidateNewName => {
-            debug!("Zjišťuji, jestli se v databázi nachází položka s daným názvem");
-            let conn = state.db.acquire();
-            let name = picker.new_name.clone();
-            let tab = picker.tab;
-            Task::perform(
-                async move {
-                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                    match tab {
-                        Tab::Song => Song::exists_in_db(&mut conn, &name)
-                            .await
-                            .map(|o| o.is_none()),
-                        Tab::Playlist => playlist::is_name_available(conn, &name).await,
-                    }
-                },
-                |res| match res {
-                    Ok(available) => {
-                        if available {
-                            Message::CreateNew.into()
-                        } else {
-                            Message::NameAlreadyTaken.into()
-                        }
-                    }
-                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                },
-            )
-        }
-        Message::NameAlreadyTaken => {
-            let item_name = match picker.tab {
-                Tab::Song => "Píseň",
-                Tab::Playlist => "Playlist",
-            };
+            debug!("Validuji název nové položky");
+            let others = match picker.tab {
+                Tab::Song => picker.songs.state(),
+                Tab::Playlist => picker.playlists.state(),
+            }
+            .as_loaded()
+            .expect("Validace jména může proběhnout až potom, co jsou načtena data z databáze")
+            .options()
+            .iter()
+            .map(|item| &item.name);
 
-            debug!(
-                "{item_name} s daným názvem existuje, nic nevytvářím a nastavuju chybovou hlášku"
-            );
+            let new_name = picker.new_name.trim();
+            let is_unique = is_new_name_unique(&new_name, others);
+            if is_unique {
+                match picker.tab {
+                    Tab::Song => {
+                        debug!("Vytvářím novou píseň \"{}\"", new_name);
+                        let new_song = Song {
+                            title: new_name.to_string(),
+                            author: None,
+                            parts: HashMap::new(),
+                            order: Vec::new(),
+                        };
+                        Task::done(Message::EditSong(new_song).into())
+                    }
+                    Tab::Playlist => {
+                        debug!("Vytvářím nový playlist \"{}\"", new_name);
+                        let new_playlist = PlaylistMetadata::new(new_name);
+                        Task::done(Message::EditPlaylist(new_playlist).into())
+                    }
+                }
+            } else {
+                debug!(
+                    "Položka s daným názvem existuje, nic nevytvářím a nastavuju chybovou hlášku"
+                );
 
-            let err_msg = format!(
-                "{} s názvem \"{}\" již existuje, vyber jiný název",
-                item_name, picker.new_name
-            );
-            picker.err_msg = Some(err_msg);
-            Task::none()
+                let err_msg = format!(
+                    "Položka s názvem \"{}\" již existuje, vyber jiný název",
+                    new_name
+                );
+                picker.err_msg = Some(err_msg);
+                Task::none()
+            }
         }
         Message::EditPlaylist(playlist) => {
             debug!("Vybrán playlist, přecházím na editaci {:#?}", playlist);
@@ -199,7 +178,6 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             Task::perform(
                 async move {
                     let conn = conn.await.context("Nelze získat připojení k databázi")?;
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     playlist::get_available(conn).await
                 },
                 |res| match res {
@@ -357,6 +335,15 @@ impl StartScreen {
             .center_y(Length::Fill),
         ])
     }
+}
+
+/// Zkontroluje unikátnost `name` (že se `name` mezi `others` nevyskytuje). Pokud je unikátní,
+/// vrátí `Ok()`, jinak `Err()`
+fn is_new_name_unique(name: &str, others: impl IntoIterator<Item: AsRef<str>>) -> bool {
+    others
+        .into_iter()
+        .find(|item| item.as_ref() == name)
+        .is_none()
 }
 
 impl Default for StartScreen {
