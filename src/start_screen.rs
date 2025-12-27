@@ -1,8 +1,11 @@
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
 use crate::{
     Ekkles, Screen,
-    components::{LazyLoadable, LazyLoadableState},
+    components::{
+        LazyLoadable, LazyLoadableState, PickerItem,
+        song_picker::{self, SongPicker},
+    },
     playlist_editor,
 };
 use anyhow::Context;
@@ -18,8 +21,8 @@ use log::{debug, trace};
 
 #[derive(Debug)]
 pub struct StartScreen {
-    playlists: LazyLoadable<combo_box::State<StartScreenPickerBoxItem>, Message>,
-    songs: LazyLoadable<combo_box::State<StartScreenPickerBoxItem>, Message>,
+    playlists: LazyLoadable<combo_box::State<PickerItem>, Message>,
+    song_picker: SongPicker,
     new_name: String,
     err_msg: Option<String>,
     tab: Tab,
@@ -29,18 +32,6 @@ pub struct StartScreen {
 enum Tab {
     Song,
     Playlist,
-}
-
-#[derive(Debug, Clone)]
-pub struct StartScreenPickerBoxItem {
-    id: i64,
-    name: String,
-}
-
-impl Display for StartScreenPickerBoxItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
 }
 
 impl From<Message> for crate::Message {
@@ -53,12 +44,10 @@ impl From<Message> for crate::Message {
 pub enum Message {
     TabSongs,
     TabPlaylists,
+    SongPickerMsg(song_picker::Message),
     LoadPlaylists,
     PlaylistsLoaded(Vec<(i64, String)>),
-    LoadSongs,
-    SongsLoaded(Vec<(i64, String)>),
     PickedPlaylist(i64),
-    PickedSong(i64),
     NewNameChanged(String),
     ValidateNewName,
     EditPlaylist(PlaylistMetadata),
@@ -88,7 +77,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             debug!("Načetlo se {} playlistů", playlists.len());
             let options = playlists
                 .into_iter()
-                .map(|(id, name)| StartScreenPickerBoxItem { id, name })
+                .map(|(id, name)| PickerItem { id, name })
                 .collect();
             picker
                 .playlists
@@ -123,7 +112,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
         Message::ValidateNewName => {
             debug!("Validuji název nové položky");
             let others = match picker.tab {
-                Tab::Song => picker.songs.state(),
+                Tab::Song => picker.song_picker.songs().state(),
                 Tab::Playlist => picker.playlists.state(),
             }
             .as_loaded()
@@ -133,7 +122,11 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             .map(|item| &item.name);
 
             let new_name = picker.new_name.trim();
+
+            // Toto je potenciálně drahá operace, tudíž by šlo přesunout ji do Task, aby se vypočetla na pozadí a neblokovala GUI
+            // Ovšem neočekáváme příliš dlouhý výpočet (počet položek v řádu maximálně tisíců)
             let is_unique = is_new_name_unique(&new_name, others);
+
             if is_unique {
                 match picker.tab {
                     Tab::Song => {
@@ -173,9 +166,8 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
         Message::LoadPlaylists => {
             debug!("Načítám seznam playlistů");
             // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
-            picker.playlists.start_loading();
             let conn = state.db.acquire();
-            Task::perform(
+            let (task, handle) = Task::abortable(Task::perform(
                 async move {
                     let conn = conn.await.context("Nelze získat připojení k databázi")?;
                     playlist::get_available(conn).await
@@ -184,55 +176,37 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                     Ok(pls) => Message::PlaylistsLoaded(pls).into(),
                     Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
                 },
-            )
+            ));
+            picker.playlists.start_loading(handle);
+            task
         }
-        Message::LoadSongs => {
-            debug!("Načítám seznam písní");
-            picker.songs.start_loading();
-            let conn = state.db.acquire();
-            Task::perform(
-                async move {
-                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                    Song::get_available_from_db(&mut conn).await
-                },
-                |res| match res {
-                    Ok(pls) => Message::SongsLoaded(pls).into(),
-                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                },
-            )
-        }
-        Message::SongsLoaded(songs) => {
-            debug!("Načetlo se {} písní", songs.len());
-            let options = songs
-                .into_iter()
-                .map(|(id, name)| StartScreenPickerBoxItem { id, name })
-                .collect();
-            picker.songs.finish_loading(combo_box::State::new(options));
-            Task::none()
-        }
-        Message::PickedSong(id) => {
-            debug!("Byla vybrána píseň k otevření, jdu ji načíst z databáze");
-
-            let conn = state.db.acquire();
-            let picked_song_id = id;
-
-            Task::perform(
-                async move {
-                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                    Song::load_from_db(picked_song_id, &mut conn).await
-                },
-                |res| match res {
-                    Ok(loaded_song) => Message::EditSong(loaded_song).into(),
-                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                },
-            )
-        }
-        Message::EditSong(_) => {
+        Message::EditSong(song) => {
+            debug!("Vybrána píseň, přecházím na editaci {:#?}", song);
             todo!("Ještě neumím editovat písně :(");
-            // debug!("Vybrána píseň, přecházím na editaci {:#?}", song);
             // state.screen = ...
             // Task::none()
         }
+        Message::SongPickerMsg(msg) => match msg {
+            song_picker::Message::Return => Task::done(crate::Message::ShouldQuit),
+            song_picker::Message::ReturnSelected(picker_item) => {
+                let conn = state.db.acquire();
+                Task::perform(
+                    async move {
+                        let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                        Song::load_from_db(picker_item.id, &mut conn).await
+                    },
+                    |res| match res {
+                        Ok(song) => Message::EditSong(song).into(),
+                        Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                    },
+                )
+            }
+            song_picker::Message::FatalError(e) => Task::done(crate::Message::FatalErrorOccured(e)),
+            _ => picker
+                .song_picker
+                .update(&state.db, msg)
+                .map(|m| Message::SongPickerMsg(m).into()),
+        },
     }
 }
 
@@ -240,7 +214,7 @@ impl StartScreen {
     pub fn new() -> Self {
         Self {
             playlists: LazyLoadable::new(Message::LoadPlaylists),
-            songs: LazyLoadable::new(Message::LoadSongs),
+            song_picker: SongPicker::new(),
             new_name: String::from(""),
             err_msg: None,
             tab: Tab::Playlist,
@@ -248,59 +222,16 @@ impl StartScreen {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let (
-            new_name_description,
-            pick_existing_description,
-            create_new_description,
-            tab_song_msg,
-            tab_playlist_msg,
-        ) = match self.tab {
-            Tab::Song => (
-                "Název nové písně:",
-                "Vyber píseň",
-                "Nebo vytvoř novou",
-                None,
-                Some(Message::TabPlaylists),
-            ),
-            Tab::Playlist => (
-                "Název nového playlistu:",
-                "Vyber playlist",
-                "Nebo vytvoř nový",
-                Some(Message::TabSongs),
-                None,
-            ),
-        };
-
-        let data_src = match self.tab {
-            Tab::Song => &self.songs,
-            Tab::Playlist => &self.playlists,
-        };
-
-        let central_column = match data_src.state() {
-            LazyLoadableState::Cold | LazyLoadableState::Loading => {
-                let picker_not_loaded = data_src.view_not_loaded();
+        let central_column = match self.tab {
+            Tab::Song => {
+                let song_picker = self.song_picker.view();
                 column![
                     space().height(Length::FillPortion(1)),
-                    picker_not_loaded.height(Length::Shrink),
-                    space().height(Length::FillPortion(1)),
-                ]
-            }
-            LazyLoadableState::Loaded(picker_state) => {
-                let picker_loaded = match self.tab {
-                    Tab::Song => combo_box(picker_state, "Název písně", None, |picked| {
-                        Message::PickedSong(picked.id)
-                    }),
-                    Tab::Playlist => combo_box(picker_state, "Název playlistu", None, |picked| {
-                        Message::PickedPlaylist(picked.id)
-                    }),
-                };
-                column![
-                    space().height(Length::FillPortion(1)),
-                    pick_existing_description,
-                    picker_loaded,
-                    create_new_description,
+                    "Vyber píseň",
+                    container(song_picker.map(Message::SongPickerMsg)).height(Length::Fixed(500.0)),
+                    "Nebo vytvoř novou píseň",
                     row![
-                        text_input(new_name_description, &self.new_name)
+                        text_input("Název nové písně", &self.new_name)
                             .on_input(|input| Message::NewNameChanged(input))
                             .on_submit(Message::ValidateNewName),
                         button("Vytvořit!").on_press(Message::ValidateNewName),
@@ -310,6 +241,48 @@ impl StartScreen {
                     space().height(Length::FillPortion(1)),
                 ]
             }
+            Tab::Playlist => {
+                let playlist_picker = match self.playlists.state() {
+                    LazyLoadableState::Cold | LazyLoadableState::Loading(_) => {
+                        let picker_not_loaded = self.playlists.view_not_loaded();
+                        column![
+                            space().height(Length::FillPortion(1)),
+                            picker_not_loaded.height(Length::Shrink),
+                            space().height(Length::FillPortion(1)),
+                        ]
+                    }
+                    LazyLoadableState::Loaded(picker_state) => {
+                        column![
+                            space().height(Length::FillPortion(1)),
+                            combo_box(picker_state, "Název playlistu", None, |picked| {
+                                Message::PickedPlaylist(picked.id)
+                            }),
+                            space().height(Length::FillPortion(1)),
+                        ]
+                    }
+                };
+
+                column![
+                    space().height(Length::FillPortion(1)),
+                    "Vyber playlist",
+                    playlist_picker,
+                    "Nebo vytvoř nový playlist",
+                    row![
+                        text_input("Název nového playlistu", &self.new_name)
+                            .on_input(|input| Message::NewNameChanged(input))
+                            .on_submit(Message::ValidateNewName),
+                        button("Vytvořit!").on_press(Message::ValidateNewName),
+                    ]
+                    .spacing(10),
+                    text(self.err_msg.clone().unwrap_or(String::from(""))).style(danger),
+                    space().height(Length::FillPortion(1)),
+                ]
+            }
+        };
+
+        let (tab_song_msg, tab_playlist_msg) = match self.tab {
+            Tab::Song => (None, Some(Message::TabPlaylists)),
+            Tab::Playlist => (Some(Message::TabSongs), None),
         };
 
         Into::<Element<Message>>::into(column![
@@ -326,7 +299,8 @@ impl StartScreen {
                 space().width(Length::FillPortion(1)),
                 central_column
                     .spacing(10)
-                    .width(Length::FillPortion(1))
+                    .height(Length::Shrink)
+                    .width(Length::FillPortion(2))
                     .max_width(1000),
                 space().width(Length::FillPortion(1))
             ])
@@ -337,8 +311,7 @@ impl StartScreen {
     }
 }
 
-/// Zkontroluje unikátnost `name` (že se `name` mezi `others` nevyskytuje). Pokud je unikátní,
-/// vrátí `Ok()`, jinak `Err()`
+/// Zkontroluje zda-li je `name` unikátní (že se `name` mezi `others` nevyskytuje)
 fn is_new_name_unique(name: &str, others: impl IntoIterator<Item: AsRef<str>>) -> bool {
     others
         .into_iter()
