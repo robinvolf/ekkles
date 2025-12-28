@@ -13,11 +13,11 @@ use sqlx::SqlitePool;
 #[derive(Debug, Clone)]
 pub enum Message {
     LoadSongs,
-    SongsLoaded(Vec<PickerItem>),
+    SongsLoaded(Vec<PickerItem>, u32),
     SelectSong(PickerItem),
     PreviewChanged(PickerItem),
     LoadPreview(PickerItem),
-    PreviewLoaded(Song),
+    PreviewLoaded(Song, u32),
     Return,
     ReturnSelected(PickerItem),
     FatalError(String),
@@ -45,7 +45,9 @@ impl SongPicker {
 
     pub fn view(&self) -> Element<Message> {
         let picker = match &self.songs.state() {
-            LazyLoadableState::Cold | LazyLoadableState::Loading(_) => self.songs.view_not_loaded(),
+            LazyLoadableState::Cold | LazyLoadableState::Loading { .. } => {
+                self.songs.view_not_loaded()
+            }
             LazyLoadableState::Loaded(combo_box_state) => container(
                 combo_box(
                     combo_box_state,
@@ -59,7 +61,7 @@ impl SongPicker {
 
         let preview = match &self.preview {
             Some(l) => match l.state() {
-                LazyLoadableState::Cold | LazyLoadableState::Loading(_) => l.view_not_loaded(),
+                LazyLoadableState::Cold | LazyLoadableState::Loading { .. } => l.view_not_loaded(),
                 LazyLoadableState::Loaded(s) => song_preview(s),
             },
             None => container(space()),
@@ -97,27 +99,25 @@ impl SongPicker {
             Message::LoadSongs => {
                 debug!("Načítám seznam písní");
                 let conn = db.acquire();
-                let (task, handle) = Task::abortable(Task::perform(
-                    async {
-                        let mut conn = conn.await?;
-                        Song::get_available_from_db(&mut conn).await.map(|vec| {
-                            vec.into_iter()
-                                .map(|(id, name)| PickerItem::new(id, name))
-                                .collect()
-                        })
-                    },
-                    |res| match res {
-                        Ok(songs) => Message::SongsLoaded(songs).into(),
-                        Err(e) => Message::FatalError(format!("{:?}", e)),
-                    },
-                ));
-                self.songs.start_loading(handle);
+                let (task, handle) = Task::abortable(Task::future(async {
+                    let mut conn = conn.await?;
+                    Song::get_available_from_db(&mut conn).await.map(|vec| {
+                        vec.into_iter()
+                            .map(|(id, name)| PickerItem::new(id, name))
+                            .collect()
+                    })
+                }));
+                let task_id = self.songs.start_loading(handle);
+                let task = Task::map(task, move |res| match res {
+                    Ok(songs) => Message::SongsLoaded(songs, task_id).into(),
+                    Err(e) => Message::FatalError(format!("{:?}", e)),
+                });
                 task
             }
-            Message::SongsLoaded(song_picker_items) => {
+            Message::SongsLoaded(song_picker_items, task_id) => {
                 debug!("Písně načteny: {:#?}", &song_picker_items);
                 self.songs
-                    .finish_loading(combo_box::State::new(song_picker_items));
+                    .finish_loading(combo_box::State::new(song_picker_items), task_id);
 
                 Task::none()
             }
@@ -132,29 +132,27 @@ impl SongPicker {
             Message::LoadPreview(item) => {
                 debug!("Načítám preview pro píseň {}", item.name);
                 let conn = db.acquire();
-                let (task, handle) = Task::abortable(Task::perform(
-                    async move {
-                        let mut conn = conn.await?;
-                        Song::load_from_db(item.id, &mut conn).await
-                    },
-                    |res| match res {
-                        Ok(song) => Message::PreviewLoaded(song).into(),
-                        Err(e) => Message::FatalError(format!("{:?}", e)),
-                    },
-                ));
-                self.preview
+                let (task, handle) = Task::abortable(Task::future(async move {
+                    let mut conn = conn.await?;
+                    Song::load_from_db(item.id, &mut conn).await
+                }));
+                let task_id = self
+                    .preview
                     .as_mut()
                     .expect("Při zavolání LoadPreview již musí být preview Some()")
                     .start_loading(handle);
-
+                let task = Task::map(task, move |res| match res {
+                    Ok(song) => Message::PreviewLoaded(song, task_id).into(),
+                    Err(e) => Message::FatalError(format!("{:?}", e)),
+                });
                 task
             }
-            Message::PreviewLoaded(song) => {
+            Message::PreviewLoaded(song, task_id) => {
                 debug!("Načetlo se previw pro píseň {}", song.title);
                 self.preview
                     .as_mut()
                     .expect("Při zavolání LoadPreview již musí být preview Some()")
-                    .finish_loading(song);
+                    .finish_loading(song, task_id);
                 Task::none()
             }
             m @ Message::ReturnSelected(_) | m @ Message::Return | m @ Message::FatalError(_) => {

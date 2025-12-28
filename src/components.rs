@@ -1,17 +1,21 @@
 //! Uchovává znovuvyužitelné komponenty, které se používají na více místech v programu
 
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use iced::{
     Length,
     task::Handle,
     widget::{Container, container, sensor, text},
 };
+use log::trace;
 
 pub mod playlist_item_styles;
 pub mod song_picker;
 
-/// V programu je několikrát používán [`iced::widget::combo_box`], jehož položky musí
+/// V programu je několikrát používán [`iced::widget::combo_box()`], jehož položky musí
 /// implementovat [`Display`]. Nám ovšem při výběru jde zpravidla o `id`.
 #[derive(Debug, Clone)]
 pub struct PickerItem {
@@ -71,7 +75,7 @@ where
             )
             .center(Length::Fill)
             .style(container::secondary),
-            LazyLoadableState::Loading(_) => container(text("Načítám obsah z databáze"))
+            LazyLoadableState::Loading { .. } => container(text("Načítám obsah z databáze"))
                 .center(Length::Fill)
                 .style(container::secondary),
             LazyLoadableState::Loaded(_) => panic!(
@@ -80,37 +84,57 @@ where
         }
     }
 
-    pub fn start_loading(&mut self, handle: Handle) {
+    /// Začne načítat zdroj s příslušným `Handle` a vrátí `id`, které je třeba vrátit při [`Self::finish_loading()`], jakmile bude `Task` dokončen
+    pub fn start_loading(&mut self, handle: Handle) -> u32 {
+        static TASK_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
         assert!(
             self.state.is_cold(),
             "Metoda start_loading() musí být zavolána na LazyLoadable ve stavu Cold"
         );
 
-        self.state = LazyLoadableState::Loading(handle)
+        let task_id = TASK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+        self.state = LazyLoadableState::Loading { handle, task_id };
+        task_id
     }
 
-    /// Pokud byl ve stavu `Loading`, taks zruší načítání daného zdroje přes jeho [`Handle`]. Vždy na konci nastaví stav na [`LazyLoadableState::Cold`]
+    /// Pokud byl ve stavu `Loading`, tak zruší načítání daného zdroje přes jeho [`Handle`]. Vždy na konci nastaví stav na [`LazyLoadableState::Cold`]
     pub fn cancel_loading_opt(&mut self) {
-        if let LazyLoadableState::Loading(handle) = &self.state {
+        if let LazyLoadableState::Loading { handle, task_id: _ } = &self.state {
             handle.abort();
         }
         self.state = LazyLoadableState::Cold;
     }
 
-    pub fn finish_loading(&mut self, result: T) {
-        assert!(
-            self.state.is_loading(),
-            "Metoda finish_loading() musí být zavolána na LazyLoadable ve stavu Loading"
-        );
-
-        self.state = LazyLoadableState::Loaded(result)
+    /// Ukončí načítání a nastaví `LazyLoadable` do stavu `Loaded`, pokud nebyl task s `handle` zrušen ([`Handle::is_aborted()`]) a `task_id` odpovídá `id`, které [`Self::start_loading()`] vrátil jako poslední
+    pub fn finish_loading(&mut self, result: T, task_id: u32) {
+        if let LazyLoadableState::Loading {
+            handle,
+            task_id: desired_id,
+        } = &self.state
+            && !handle.is_aborted()
+        {
+            if task_id == *desired_id {
+                self.state = LazyLoadableState::Loaded(result)
+            } else {
+                trace!(
+                    "LazyLoadable obdržel finish_loading(), pro id {task_id}, ale čeká na task s id {desired_id}, zahazuji výsledek"
+                );
+            }
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum LazyLoadableState<T> {
     Cold,
-    Loading(Handle),
+    Loading {
+        /// Handle pro daný [`iced::task::Task`], aby bylo možné jej zrušit
+        handle: Handle,
+        /// Id, podle kterého poznáme, který `Task` se načítal (při příliš rychlém vyřízení `Task`u) jeho zrušení neproběhne (už je vykonán) a potom je nutné rozlišit, poslední vyvolaný `Task` pro daný `LazyLoadableState` pomocí `task_id` a ostatní zahodit
+        task_id: u32,
+    },
     Loaded(T),
 }
 
@@ -128,7 +152,7 @@ impl<T> LazyLoadableState<T> {
     /// [`Loading`]: LazyLoadableState::Loading
     #[must_use]
     pub fn is_loading(&self) -> bool {
-        matches!(self, Self::Loading(_))
+        matches!(self, Self::Loading { .. })
     }
 
     pub fn as_loaded(&self) -> Option<&T> {

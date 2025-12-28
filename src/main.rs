@@ -1,3 +1,4 @@
+use components::song_picker;
 use config::Config;
 use iced::Element;
 use iced::window::{self, Id, Settings};
@@ -12,7 +13,6 @@ mod error_screen;
 mod playlist_editor;
 mod presenter;
 mod song_editor;
-mod song_picker;
 mod start_screen;
 mod update;
 
@@ -28,7 +28,7 @@ enum Screen {
     /// Editování playlistu
     EditPlaylist(playlist_editor::PlaylistEditor),
     /// Vybírání písně k zařazení do playlistu
-    PickSong(song_picker::SongPicker),
+    // PickSong(song_picker::SongPicker),
     /// Vybírání biblické pasáže k zařazení do playlistu
     PickBible(bible_picker::BiblePicker),
     /// Prezentování playlistu
@@ -101,7 +101,7 @@ impl Ekkles {
             Screen::PickEditor(_) => Subscription::none(),
             Screen::ErrorOccurred(_) => Subscription::none(),
             Screen::EditPlaylist(_) => Subscription::none(),
-            Screen::PickSong(_) => Subscription::none(),
+            // Screen::PickSong(_) => Subscription::none(),
             Screen::PickBible(_) => Subscription::none(),
             Screen::Presenter(presenter) => presenter.subscription(),
         };
@@ -115,7 +115,7 @@ impl Ekkles {
                 Screen::PickEditor(picker) => picker.view().map(|msg| msg.into()),
                 Screen::ErrorOccurred(err) => error_screen::view(err),
                 Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
-                Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
+                // Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
                 Screen::PickBible(bible_picker) => bible_picker.view().map(|msg| msg.into()),
                 Screen::Presenter(presenter) => presenter.view_control().map(|msg| msg.into()),
             }

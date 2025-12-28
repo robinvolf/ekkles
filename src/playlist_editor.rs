@@ -329,10 +329,11 @@ impl PlaylistEditor {
             Message::AddSong => {
                 debug!("Přecházím na výběr písně");
                 let playlist = editor.playlist.blocking_lock().clone();
-                state.screen = Screen::PickSong(SongPicker::new(playlist));
-                Task::done(crate::Message::SongPicker(
-                    crate::song_picker::Message::LoadSongs,
-                ))
+                todo!();
+                // state.screen = Screen::PickSong(SongPicker::new(playlist));
+                // Task::done(crate::Message::SongPicker(
+                //     crate::song_picker::Message::LoadSongs,
+                // ))
             }
             Message::PlaylistSavedSuccessfully => {
                 debug!("Playlist byl úspéšně uložen");

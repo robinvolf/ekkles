@@ -46,7 +46,7 @@ pub enum Message {
     TabPlaylists,
     SongPickerMsg(song_picker::Message),
     LoadPlaylists,
-    PlaylistsLoaded(Vec<(i64, String)>),
+    PlaylistsLoaded(Vec<(i64, String)>, u32),
     PickedPlaylist(i64),
     NewNameChanged(String),
     ValidateNewName,
@@ -73,7 +73,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             picker.tab = Tab::Playlist;
             Task::none()
         }
-        Message::PlaylistsLoaded(playlists) => {
+        Message::PlaylistsLoaded(playlists, task_id) => {
             debug!("Načetlo se {} playlistů", playlists.len());
             let options = playlists
                 .into_iter()
@@ -81,7 +81,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                 .collect();
             picker
                 .playlists
-                .finish_loading(combo_box::State::new(options));
+                .finish_loading(combo_box::State::new(options), task_id);
             Task::none()
         }
         Message::PickedPlaylist(id) => {
@@ -167,17 +167,15 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
             debug!("Načítám seznam playlistů");
             // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
             let conn = state.db.acquire();
-            let (task, handle) = Task::abortable(Task::perform(
-                async move {
-                    let conn = conn.await.context("Nelze získat připojení k databázi")?;
-                    playlist::get_available(conn).await
-                },
-                |res| match res {
-                    Ok(pls) => Message::PlaylistsLoaded(pls).into(),
-                    Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                },
-            ));
-            picker.playlists.start_loading(handle);
+            let (task, handle) = Task::abortable(Task::future(async move {
+                let conn = conn.await.context("Nelze získat připojení k databázi")?;
+                playlist::get_available(conn).await
+            }));
+            let task_id = picker.playlists.start_loading(handle);
+            let task = Task::map(task, move |res| match res {
+                Ok(pls) => Message::PlaylistsLoaded(pls, task_id).into(),
+                Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+            });
             task
         }
         Message::EditSong(song) => {
@@ -243,7 +241,7 @@ impl StartScreen {
             }
             Tab::Playlist => {
                 let playlist_picker = match self.playlists.state() {
-                    LazyLoadableState::Cold | LazyLoadableState::Loading(_) => {
+                    LazyLoadableState::Cold | LazyLoadableState::Loading { .. } => {
                         let picker_not_loaded = self.playlists.view_not_loaded();
                         column![
                             space().height(Length::FillPortion(1)),

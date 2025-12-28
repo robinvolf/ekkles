@@ -29,9 +29,9 @@ impl Ekkles {
             (Message::PlaylistEditor(msg), Screen::EditPlaylist(_)) => {
                 playlist_editor::PlaylistEditor::update(self, msg)
             }
-            (Message::SongPicker(msg), Screen::PickSong(_)) => {
-                song_picker::SongPicker::update(self, msg)
-            }
+            // (Message::SongPicker(msg), Screen::PickSong(_)) => {
+            //     song_picker::SongPicker::update(self, msg)
+            // }
             (Message::BiblePicker(msg), Screen::PickBible(_)) => {
                 bible_picker::BiblePicker::update(self, msg)
             }
