@@ -4,15 +4,10 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
 ## TODO
 
-- [ ] Přemigruj iced na verzi 0.14
-- [ ] Využij senzory pro lazy loading. Wrapni v nějakém enumu start/loading/loaded
-  - Na start to hodí senzor, který začne načítat data z databáze, loading jen zobrazí, že se načítá a loaded bude načteno - takto logika načítání věcí připadne vždy na obrazovku, kde se to děje
-    - Je možné to nějak generalizovat a vytvořit z toho samostatnou komponentu
+- Rozmysli si, jestli má smysl udržovat status playlistu při jeho editaci (clean/transient/dirty). Ukládání do DB je přece velice levné, poté může být uložení immutable a nepotřebujeme mutex, což zjednoduší GUI kód
   - [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
-  - [ ] Sniž závislost na mezi jednotlivými obrazovkami pomocí [senzorů](https://docs.iced.rs/iced/widget/sensor/struct.Sensor.html), které můžou při prvním načtení obrazovky začít načítat věci z databáze
   - [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
-- [ ] Předělej obrazovky pro vybírání věcí, aby to byly jen komponenty, které se dají využít buď pomocí stack na jedné z obrazovek (jako v opensongu to jen bude navrchu) nebo se dají dát na separátní obrazovku (např. výběr playlistu)
-  - [ ] Možnost přidávání písní/veršů za běhu
+- [ ] Možnost přidávání písní/veršů za běhu
 - [ ] Přidat editor písní
 - [ ] Rozšiř konfiguraci (hardcoded věci), konfigurák, CLI, proměnné prostředí
 - [ ] Začleň ikonky pomocí custom fontů přes [iced_fonts](https://github.com/Redhawk18/iced_fonts)
