@@ -7,26 +7,11 @@
 //!   2. Pro modifikaci [`PlaylistMetadata`], ukládá pouze metadata položek (id z databáze),
 //!   je určen pro editaci playlistu, a zpětné ukládání do databáze.
 //!
-//! ### Status Metadatového playlistu
-//! Metadatový playlist má pole `status`, které označuje, zda-li jsou data uložena v DB.
-//! Pracuje následovně:
-//! ```text
-//!            new()
-//!             ->   Transient
-//!                      |
-//!          modify()    | save()
-//!             <-       V
-//!   Dirty             Clean
-//!             ->
-//!           save()
-//! ```
-//!
 //! ### Ukládání času
 //! Playlisty si ukládají čas vzniku, aby bylo možné je posléze podle něj řadit.
 //! Tento čas je reprezentován jak v datovém modelu, tak v databázi jako UTC.
 //!
 //! Při interakci s uživatelem je pak dobré jej převést na lokální Timezone pomocí:
-//!
 //! ```rust,ignore
 //! let utc = Utc::now();
 //! let local: DateTime<Local> = DateTime::from(utc);
@@ -47,17 +32,6 @@ const DB_PLAYLIST_KIND_BIBLE_PASSAGE: &str = "bible";
 /// Formátovací řetězec pro [`NaiveDateTime::parse_from_str`] a jí podobné funkce při
 /// parsování řetězců z/do databáze.
 const DB_DATETIME_FORMAT: &str = "%F %T";
-
-/// Status playlistu ohledně databáze, viz [dokumentace modulu](`crate::playlist`)
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum PlaylistMetadataStatus {
-    /// Nebyl ještě uložen do databáze
-    Transient,
-    /// Je uložený v db pod daným ID
-    Clean(i64),
-    /// Je uložený v db pod daným ID, ale od svého uložení se liší (byl editován)
-    Dirty(i64),
-}
 
 /// Playlist se skládá z vícero druhů položek, tento enum je rozlišuje.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -188,63 +162,6 @@ impl PlaylistItemMetadata {
         Ok(())
     }
 
-    /// Odstraní danou položku playlistu `playlist_id` s pořadovým číslem `order`
-    /// z databáze za pomocí dané transakce, pokud nastane chyba při mazání, vrací Error.
-    ///
-    /// ### Existence v DB
-    /// Pokud daná položka neexistuje v databázi vrací Error.
-    ///
-    /// ### Transakce
-    /// Volající je odpovědný za commit/rollback transakce, tato funkce pouze použije danou
-    /// transakci k přístupu do databáze, ale commit neprovádí.
-    async fn delete(
-        &self,
-        transaction: &mut Transaction<'_, Sqlite>,
-        playlist_id: i64,
-        order: u32,
-    ) -> Result<()> {
-        let rows_affected = query!(
-            "DELETE FROM playlist_parts WHERE playlist_id = $1 AND part_order = $2",
-            playlist_id,
-            order,
-        )
-        .execute(&mut **transaction) // Docela prokleté, viz dokumentace Transaction v sqlx
-        .await
-        .context("Nelze smazat část playlistu")?
-        .rows_affected();
-
-        if rows_affected == 0 {
-            bail!("Část playlistu pro smazání neexistuje")
-        }
-
-        let rows_affected = match self {
-            PlaylistItemMetadata::BiblePassage { .. } => query!(
-                "DELETE FROM playlist_passages  WHERE playlist_id = $1 AND part_order = $2",
-                playlist_id,
-                order,
-            )
-            .execute(&mut **transaction)
-            .await
-            .context("Nelze smazat pasáž z playlistu")?
-            .rows_affected(),
-            PlaylistItemMetadata::Song(_) => query!(
-                "DELETE FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
-                playlist_id,
-                order,
-            )
-            .execute(&mut **transaction)
-            .await
-            .context("Nelze smazat píseň z playlistu")?
-            .rows_affected(),
-        };
-
-        if rows_affected == 0 {
-            bail!("Část playlistu pro smazání neexistuje")
-        }
-
-        Ok(())
-    }
-
     /// Smaže všechny položky daného playlistu v databázi za pomocí dodané transakce.
     /// Pokud se vyskytne chyba, vrátí Error.
     ///
@@ -279,85 +196,7 @@ impl PlaylistItemMetadata {
         Ok(())
     }
 
-    /// Načte jednu položku daného playlistu s daným pořadovým číslem, pokud se načítání z databáze
-    /// nepovede, vrací Error.
-    async fn load_one(
-        mut conn: PoolConnection<Sqlite>,
-        playlist_id: i64,
-        order: u32,
-    ) -> Result<Self> {
-        let kind = query!(
-            "SELECT kind FROM playlist_parts WHERE playlist_id = $1 AND part_order = $2",
-            playlist_id,
-            order
-        )
-        .fetch_one(&mut *conn)
-        .await
-        .context("Nelze načíst druh položky playlistu")?
-        .kind;
-
-        match kind.as_str() {
-            DB_PLAYLIST_KIND_SONG => {
-                let song_id = query!(
-                    "SELECT song_id FROM playlist_songs WHERE playlist_id = $1 AND part_order = $2",
-                    playlist_id,
-                    order
-                )
-                .fetch_one(&mut *conn)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Nelze načíst část {} playlistu s id {} z databáze",
-                        order, playlist_id
-                    )
-                })?
-                .song_id;
-
-                Ok(PlaylistItemMetadata::Song(song_id))
-            }
-            DB_PLAYLIST_KIND_BIBLE_PASSAGE => {
-                let record = query!(
-                        "SELECT translation_id, start_book_id, start_chapter, start_number, end_book_id, end_chapter, end_number FROM playlist_passages WHERE playlist_id = $1 AND part_order = $2",
-                        playlist_id,
-                        order
-                    )
-                    .fetch_one(&mut *conn)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Nelze načíst část {} playlistu s id {} z databáze",
-                            order, playlist_id
-                        )
-                    })?;
-
-                let from = VerseIndex::try_new(
-                    Book::try_from(record.start_book_id as u8)?,
-                    record.start_chapter as u8,
-                    record.start_number as u8,
-                )
-                .ok_or(anyhow!("Nevalidní index verše v databázi"))?;
-
-                let to = VerseIndex::try_new(
-                    Book::try_from(record.end_book_id as u8)?,
-                    record.end_chapter as u8,
-                    record.end_number as u8,
-                )
-                .ok_or(anyhow!("Nevalidní index verše v databázi"))?;
-
-                Ok(PlaylistItemMetadata::BiblePassage {
-                    translation_id: record.translation_id,
-                    from,
-                    to,
-                })
-            }
-            _ => panic!(
-                "Sloupec playlist_parts.kind by měl být integritně omezen na '{}' nebo '{}', došlo ke korupci dat v databázi?",
-                DB_PLAYLIST_KIND_SONG, DB_PLAYLIST_KIND_BIBLE_PASSAGE
-            ),
-        }
-    }
-
-    /// Načte všechny položky playlistu a vrátí je jako vektor, pokud se načítání z databáze nepovede, vrací Error.
+    /// Načte všechny položky playlistu a vrátí je jako vektor (v příslušném pořadí), pokud se načítání z databáze nepovede, vrací Error.
     async fn load_many(mut conn: PoolConnection<Sqlite>, playlist_id: i64) -> Result<Vec<Self>> {
         let parts = query!(
             "SELECT part_order, kind FROM playlist_parts WHERE playlist_id = $1 ORDER BY part_order ASC",
@@ -439,12 +278,10 @@ impl PlaylistItemMetadata {
 /// Struktura obsahující pouze metadata playlistu určená pro editaci
 /// (nemusí načítat obsahy jednotlivých položek, postačí identifikátory).
 ///
-/// Tato struktura reprezentuje playlist uložený v databázi a pomocí
-/// [`PlaylistMetadata::get_status()`] lze zjistit, zda-li se od playlistu
-/// v databázi liší (byl editován).
+/// Tato struktura _vždy_ reprezentuje playlist uložený v databázi
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PlaylistMetadata {
-    status: PlaylistMetadataStatus,
+    id: i64,
     name: String,
     /// Čas vytvoření playlistu zaokrouhlený k nejbližší sekundě
     created: DateTime<Utc>,
@@ -452,33 +289,41 @@ pub struct PlaylistMetadata {
 }
 
 impl PlaylistMetadata {
-    /// Vytvoří nový playlist se jménem `name`.
-    pub fn new(name: &str) -> Self {
-        Self {
-            status: PlaylistMetadataStatus::Transient,
-            name: name.to_string(),
-            created: Utc::now().round_subsecs(0),
+    /// Vytvoří v databázi nový playlist s názvem `name`.
+    pub async fn create(name: &str, conn: &mut PoolConnection<Sqlite>) -> Result<Self> {
+        let created = Utc::now().trunc_subsecs(0);
+
+        let mut transaction = conn
+            .begin()
+            .await
+            .context("Nelze získat transakci na poolu databáze")?;
+
+        let formatted_datetime = created.format(DB_DATETIME_FORMAT).to_string();
+
+        let id = query!(
+            "INSERT INTO playlists (name, created) VALUES ($1, datetime($2))",
+            name,
+            formatted_datetime
+        )
+        .execute(&mut *transaction)
+        .await
+        .with_context(|| format!("Nelze uložit playlist '{}' do databáze", name))?
+        .last_insert_rowid();
+
+        transaction
+            .commit()
+            .await
+            .with_context(|| format!("Commit transakce uložení playlistu {} selhal", name))?;
+
+        Ok(Self {
+            id,
+            name: name.into(),
+            created,
             items: Vec::new(),
-        }
+        })
     }
 
-    /// Vytvoří nový playlist se jménem `name` a s položkami z `other`. Stav nového
-    /// playlistu bude [`PlaylistMetadataStatus::Transient`] a čas jeho vytvoření
-    /// bude čas zavolání této funkce.
-    ///
-    /// ### Druhý playlist
-    /// Z druhého playlistu bude přesunut vektor s položkami.
-    ///
-    /// ### Proč ne move???
-    /// Protože mutex!
-    pub fn from_other(name: &str, other: &mut PlaylistMetadata) -> Self {
-        let mut new = Self::new(name);
-        std::mem::swap(&mut new.items, &mut other.items);
-        new
-    }
-
-    /// Načte existující playlist s daným ID z databáze, status bude mít nastaven na
-    /// [`PlaylistMetadataStatus::Clean`]. Pokud takový playlist neexistuje
+    /// Načte existující playlist s daným ID z databáze. Pokud takový playlist neexistuje
     /// nebo se něco v pokazí při načítání, vrátí Error.
     pub async fn load(id: i64, mut conn: PoolConnection<Sqlite>) -> Result<Self> {
         let metadata = query!("SELECT name, created FROM playlists WHERE id = $1", id)
@@ -496,7 +341,7 @@ impl PlaylistMetadata {
             .context("Nepodařilo se načíst položky playlistu")?;
 
         Ok(Self {
-            status: PlaylistMetadataStatus::Clean(id),
+            id,
             name,
             created,
             items,
@@ -506,29 +351,23 @@ impl PlaylistMetadata {
     /// Smaže playlist z databáze a nastaví jeho stav
     /// na [`PlaylistMetadataStatus::Transient`].
     pub async fn delete(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
-        match self.status {
-            PlaylistMetadataStatus::Transient => Ok(()),
-            PlaylistMetadataStatus::Clean(id) | PlaylistMetadataStatus::Dirty(id) => {
-                query!("DELETE FROM playlists WHERE id = $1", id)
-                    .execute(conn.as_mut())
-                    .await
-                    .context("Nelze smazat playlist z databáze")
-                    .map(|_| ())
-            }
-        }
+        query!("DELETE FROM playlists WHERE id = $1", self.id)
+            .execute(conn.as_mut())
+            .await
+            .context("Nelze smazat playlist z databáze")
+            .map(|_| ())
     }
 
-    /// Získá status playlistu, viz: [`PlaylistMetadataStatus`]
-    pub fn get_status(&self) -> PlaylistMetadataStatus {
-        self.status
-    }
-
-    pub fn get_name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn get_items(&self) -> &[PlaylistItemMetadata] {
+    pub fn items(&self) -> &[PlaylistItemMetadata] {
         &self.items
+    }
+
+    pub fn id(&self) -> &i64 {
+        &self.id
     }
 
     /// Convenience funkce pro vkládání písní na konec playlistu. Má stejné chování jako [`PlaylistMetadata::add_song`].
@@ -536,14 +375,10 @@ impl PlaylistMetadata {
         self.add_song(song_id, self.items.len());
     }
 
-    /// Přidá píseň s ID `song_id` do playlistu na pozici `position`. Pokud byl status `clean`, shodí jej na `dirty`.
+    /// Přidá píseň s ID `song_id` do playlistu na pozici `position`.
     pub fn add_song(&mut self, song_id: i64, position: usize) {
         self.items
             .insert(position, PlaylistItemMetadata::Song(song_id));
-
-        if let PlaylistMetadataStatus::Clean(id) = self.status {
-            self.status = PlaylistMetadataStatus::Dirty(id);
-        }
     }
 
     /// Convenience funkce pro vkládání pasáží na konec playlistu. Má stejné chování jako [`PlaylistMetadata::add_bible_passage`].
@@ -551,7 +386,7 @@ impl PlaylistMetadata {
         self.add_bible_passage(translation_id, from, to, self.items.len());
     }
 
-    /// Přidá pasáž do playlistu na pozici `position`. Pasáž bude z překladu s ID `translation_id` a bude od `from` do `to`. Pokud byl status `clean`, shodí jej na `dirty`.
+    /// Přidá pasáž do playlistu na pozici `position`. Pasáž bude z překladu s ID `translation_id` a bude od `from` do `to`.
     pub fn add_bible_passage(
         &mut self,
         translation_id: i64,
@@ -567,29 +402,21 @@ impl PlaylistMetadata {
                 to,
             },
         );
-
-        if let PlaylistMetadataStatus::Clean(id) = self.status {
-            self.status = PlaylistMetadataStatus::Dirty(id);
-        }
     }
 
     /// Odstraní položku na indexu `position` z playlistu, pokud na tomto indexu neexistje
-    /// položka, vrací Error. Pokud byl status `clean`, shodí jej na `dirty`.
+    /// položka, vrací Error.
     pub fn delete_item(&mut self, position: usize) -> Result<()> {
         if self.items.len() <= position {
             bail!("Položka na indexu {position} neexistuje");
         } else {
             self.items.remove(position);
 
-            if let PlaylistMetadataStatus::Clean(id) = self.status {
-                self.status = PlaylistMetadataStatus::Dirty(id);
-            }
-
             Ok(())
         }
     }
 
-    /// Prohodí položky na pozicích `a` a `b` v playlistu, pokud je jeden index mimo vektor, vrací error. Pokud byl status `clean`, shodí jej na `dirty`.
+    /// Prohodí položky na pozicích `a` a `b` v playlistu, pokud je jeden index mimo vektor, vrací error.
     pub fn swap_items(&mut self, a: usize, b: usize) -> Result<()> {
         if self.items.get(a).is_none() {
             bail!(
@@ -604,46 +431,16 @@ impl PlaylistMetadata {
         } else {
             self.items.swap(a, b);
 
-            if let PlaylistMetadataStatus::Clean(id) = self.status {
-                self.status = PlaylistMetadataStatus::Dirty(id);
-            }
-
             Ok(())
         }
     }
 
-    /// Uloží daný playlist do databáze a nastaví jeho status na [`PlaylistMetadataStatus::Clean`].
-    /// Pokud je již status playlistu [`PlaylistMetadataStatus::Clean`], je tato metoda no-op.
-    pub async fn save(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
-        match self.status {
-            PlaylistMetadataStatus::Transient => {
-                let new_id = self.save_transient(conn).await?;
-                self.status = PlaylistMetadataStatus::Clean(new_id);
-                Ok(())
-            }
-            PlaylistMetadataStatus::Clean(_) => Ok(()),
-            PlaylistMetadataStatus::Dirty(_) => self.save_dirty(conn).await,
-        }
-    }
-
-    /// Uloží "špinavý" playlist do databáze a označí jej jako čistý, pokud se nepovede, vrací Error.
-    ///
-    /// ### Bezpečnost
-    /// Tato metoda musí být volána *pouze* na playlistech, které mají status [`PlaylistMetadataStatus::Dirty`], jinak metoda zpanikaří.
-    /// Toto je low-level metoda, pro uložení playlistu bys měl použít raději [`PlaylistMetadata::save()`].
+    /// Uloží "špinavý" playlist do databáze, pokud se nepovede, vrací Error.
     ///
     /// ### Integrita databáze
     /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
     /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
-    async fn save_dirty(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
-        let id = if let PlaylistMetadataStatus::Dirty(id) = self.status {
-            id
-        } else {
-            panic!(
-                "Metoda `save_dirty()` byla zavolána na ne-dirty playlistu, toto by se nikdy nemělo stát"
-            )
-        };
-
+    pub async fn update(&self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
         let mut transaction = conn
             .begin()
             .await
@@ -653,19 +450,19 @@ impl PlaylistMetadata {
         query!(
             "UPDATE playlists SET name = $1 WHERE id = $2",
             self.name,
-            id
+            self.id
         )
         .execute(&mut *transaction)
         .await
         .context("Nelze updatovat jméno playlistu")?;
 
         // Odstranění všech starých položek
-        PlaylistItemMetadata::delete_all(&mut transaction, id)
+        PlaylistItemMetadata::delete_all(&mut transaction, self.id)
             .await
             .context("Nelze smazat staré položky playlistu")?;
 
         // Vložení nových položek
-        PlaylistItemMetadata::insert_many(&self.items, &mut transaction, id)
+        PlaylistItemMetadata::insert_many(&self.items, &mut transaction, self.id)
             .await
             .context("Nelze vložit nové položky playlistu")?;
 
@@ -674,123 +471,8 @@ impl PlaylistMetadata {
             .await
             .with_context(|| format!("Commit transakce uložení playlistu {} selhal", self.name))?;
 
-        self.status = PlaylistMetadataStatus::Clean(id);
-
         Ok(())
     }
-
-    /// Uloží čerstvý playlist do databáze, playlist byl pouze v paměti. V případě úspěchu vrátí  ID pod kterým byl playlist uložen, v opačném případě vrací Error.
-    ///
-    /// ### Bezpečnost
-    /// Tato metoda musí být volána *pouze* na playlistech, které mají status [`PlaylistMetadataStatus::Clean`], jinak metoda zpanikaří.
-    /// Toto je low-level metoda, pro uložení playlistu bys měl použít raději [`PlaylistMetadata::save()`].
-    ///
-    /// ### Integrita databáze
-    /// Tato metoda používá [transakce](sqlx::Transaction), pokud jakákoliv část ukládání selže,
-    /// bude proveden rollback a databáze zůstane ve stavu, v jakém byla před voláním metody.
-    async fn save_transient(&self, conn: &mut PoolConnection<Sqlite>) -> Result<i64> {
-        assert_eq!(
-            self.status,
-            PlaylistMetadataStatus::Transient,
-            "Metoda `save_transient()` byla zavolána na ne-transient playlistu, toto by se nikdy nemělo stát"
-        );
-
-        let mut transaction = conn
-            .begin()
-            .await
-            .context("Nelze získat transakci na poolu databáze")?;
-
-        let formatted_datetime = self.created.format(DB_DATETIME_FORMAT).to_string();
-
-        let playlist_id = query!(
-            "INSERT INTO playlists (name, created) VALUES ($1, datetime($2))",
-            self.name,
-            formatted_datetime
-        )
-        .execute(&mut *transaction)
-        .await
-        .with_context(|| format!("Nelze uložit playlist '{}' do databáze", self.name))?
-        .last_insert_rowid();
-
-        for (order, item) in self.items.iter().enumerate() {
-            let order: u32 = order.try_into().with_context(|| {
-                format!(
-                    "Playlist obsahuje více než {} položek (proč???), nelze uložit",
-                    u32::MAX
-                )
-            })?;
-
-            let item_kind = match item {
-                PlaylistItemMetadata::BiblePassage { .. } => DB_PLAYLIST_KIND_BIBLE_PASSAGE,
-                PlaylistItemMetadata::Song(_) => DB_PLAYLIST_KIND_SONG,
-            };
-
-            query!(
-                "INSERT INTO playlist_parts (playlist_id, part_order, kind) VALUES ($1, $2, $3)",
-                playlist_id,
-                order,
-                item_kind
-            )
-            .execute(&mut *transaction)
-            .await
-            .with_context(|| format!("Nelze uložit část playlistu '{}' do databáze", self.name))?;
-
-            match item {
-                PlaylistItemMetadata::BiblePassage {
-                    translation_id,
-                    from,
-                    to,
-                } => {
-                    let (from_book, from_chapter, from_verse_number) = from.destructure_numeric();
-                    let (to_book, to_chapter, to_verse_number) = to.destructure_numeric();
-                    query!(
-                        "INSERT INTO playlist_passages ( playlist_id, part_order, translation_id , start_book_id , start_chapter , start_number , end_book_id , end_chapter , end_number) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-                        playlist_id,
-                        order,
-                        translation_id,
-                        from_book,
-                        from_chapter,
-                        from_verse_number,
-                        to_book,
-                        to_chapter,
-                        to_verse_number
-                    )
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| format!("Nelze uložit pasáž playlistu '{}' do databáze", self.name))?; // TODO: Tu pasáž lze i pojmenovat, až budeme mít Display pro Passage/VerseIndex
-                }
-                PlaylistItemMetadata::Song(song_id) => {
-                    query!(
-                        "INSERT INTO playlist_songs (playlist_id, part_order, song_id) VALUES ($1, $2, $3)",
-                        playlist_id,
-                        order,
-                        song_id
-                    )
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| format!("Nelze uložit píseň s ID {} playlistu '{}' do databáze", song_id, self.name))?;
-                }
-            }
-        }
-
-        transaction
-            .commit()
-            .await
-            .with_context(|| format!("Commit transakce uložení playlistu {} selhal", self.name))?;
-
-        Ok(playlist_id)
-    }
-}
-
-/// Co všechno může být rozdíl mezi dvěma [`PlaylistMetadata`].
-#[derive(Debug, PartialEq, Eq)]
-enum PlaylistMetadataDiff {
-    /// Jiný název
-    Name(String),
-    /// Přidaná položka
-    Added(PlaylistItemMetadata),
-    /// Odstraněná položka
-    Removed(PlaylistItemMetadata),
 }
 
 #[derive(Debug)]
@@ -1066,48 +748,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn metadata_item_load_one_test() {
-        let pool = setup_test_db().await;
-
-        let song = PlaylistItemMetadata::Song(0);
-        let bible_passage = PlaylistItemMetadata::BiblePassage {
-            translation_id: 0,
-            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
-            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
-        };
-
-        let mut tx1 = pool.begin().await.unwrap();
-
-        let playlist_id = 0;
-        let passage_order = 0;
-        let song_order = 1;
-
-        let res = bible_passage
-            .insert(&mut tx1, playlist_id, passage_order)
-            .await;
-        assert!(res.is_ok());
-        let res = song.insert(&mut tx1, playlist_id, song_order).await;
-        assert!(res.is_ok());
-
-        tx1.commit().await.unwrap();
-
-        let passage_from_db = PlaylistItemMetadata::load_one(
-            pool.acquire().await.unwrap(),
-            playlist_id,
-            passage_order,
-        )
-        .await
-        .ok();
-        let song_from_db =
-            PlaylistItemMetadata::load_one(pool.acquire().await.unwrap(), playlist_id, song_order)
-                .await
-                .ok();
-
-        assert_eq!(passage_from_db, Some(bible_passage));
-        assert_eq!(song_from_db, Some(song));
-    }
-
-    #[tokio::test]
     async fn metadata_item_load_many_test() {
         let pool = setup_test_db().await;
 
@@ -1139,75 +779,6 @@ mod tests {
         assert!(items.is_ok());
 
         assert_eq!(items.unwrap(), vec![bible_passage, song]);
-    }
-
-    #[tokio::test]
-    async fn metadata_item_delete_test() {
-        let pool = setup_test_db().await;
-
-        let song = PlaylistItemMetadata::Song(0);
-        let bible_passage = PlaylistItemMetadata::BiblePassage {
-            translation_id: 0,
-            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
-            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
-        };
-
-        let mut tx1 = pool.begin().await.unwrap();
-
-        let playlist_id = 0;
-        let passage_order = 0;
-        let song_order = 1;
-
-        let res = bible_passage
-            .insert(&mut tx1, playlist_id, passage_order)
-            .await;
-        assert!(res.is_ok());
-        let res = song.insert(&mut tx1, playlist_id, song_order).await;
-        assert!(res.is_ok());
-
-        tx1.commit().await.unwrap();
-
-        let mut tx2 = pool.begin().await.unwrap();
-
-        let res = bible_passage
-            .delete(&mut tx2, playlist_id, passage_order)
-            .await;
-
-        assert!(res.is_ok());
-
-        tx2.commit().await.unwrap();
-
-        let res = PlaylistItemMetadata::load_one(
-            pool.acquire().await.unwrap(),
-            playlist_id,
-            passage_order,
-        )
-        .await;
-
-        assert!(res.is_err());
-    }
-
-    #[tokio::test]
-    async fn metadata_item_delete_nonexistent_test() {
-        let pool = setup_test_db().await;
-
-        let bible_passage = PlaylistItemMetadata::BiblePassage {
-            translation_id: 0,
-            from: VerseIndex::try_new(Book::Genesis, 1, 1).unwrap(),
-            to: VerseIndex::try_new(Book::Genesis, 1, 10).unwrap(),
-        };
-
-        let playlist_id = 0;
-        let passage_order = 0;
-
-        let mut tx1 = pool.begin().await.unwrap();
-
-        let res = bible_passage
-            .delete(&mut tx1, playlist_id, passage_order)
-            .await;
-
-        dbg!(&res);
-        assert!(res.is_err());
     }
 
     #[tokio::test]

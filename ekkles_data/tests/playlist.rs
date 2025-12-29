@@ -12,35 +12,33 @@ use ekkles_data::{
         get_available_translations,
         indexing::{Book, VerseIndex},
     },
-    playlist::{PlaylistItemMetadata, PlaylistMetadata, PlaylistMetadataStatus},
+    playlist::{PlaylistItemMetadata, PlaylistMetadata},
 };
 use pretty_assertions::assert_eq;
 use sqlx::query;
 
 #[tokio::test]
-async fn save_empty() {
+async fn create() {
     let pool = common::setup_db_with_bible_and_songs().await;
 
-    let mut playlist = PlaylistMetadata::new("Testovací playlist");
-
-    assert_eq!(playlist.get_status(), PlaylistMetadataStatus::Transient);
-
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
+    let mut conn = pool.acquire().await.unwrap();
+    let playlist = PlaylistMetadata::create("Testovací playlist", &mut conn)
         .await
         .unwrap();
 
-    assert!(matches!(
-        playlist.get_status(),
-        PlaylistMetadataStatus::Clean(_)
-    ));
+    let playlist_from_db = PlaylistMetadata::load(*playlist.id(), conn).await.unwrap();
+
+    assert_eq!(playlist_from_db, playlist);
 }
 
 #[tokio::test]
 async fn save_modified() {
     let pool = common::setup_db_with_bible_and_songs().await;
+    let mut conn = pool.acquire().await.unwrap();
 
-    let mut playlist = PlaylistMetadata::new("Testovací playlist");
+    let mut playlist = PlaylistMetadata::create("Testovací playlist", &mut conn)
+        .await
+        .unwrap();
 
     let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
@@ -62,28 +60,17 @@ async fn save_modified() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    assert_eq!(playlist.get_status(), PlaylistMetadataStatus::Transient);
-
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
-        .await
-        .unwrap();
-
-    if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
-        let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
-            .await
-            .unwrap();
-        assert_eq!(loaded_playlist, playlist);
-    } else {
-        panic!();
-    }
+    playlist.update(&mut conn).await.unwrap();
 }
 
 #[tokio::test]
 async fn delete_playlist() {
     let pool = common::setup_db_with_bible_and_songs().await;
+    let mut conn = pool.acquire().await.unwrap();
 
-    let mut playlist = PlaylistMetadata::new("Testovací playlist");
+    let mut playlist = PlaylistMetadata::create("Testovací playlist", &mut conn)
+        .await
+        .unwrap();
 
     let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
@@ -105,22 +92,14 @@ async fn delete_playlist() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
-        .await
-        .unwrap();
-
-    let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
-        id
-    } else {
-        panic!("Playlist není po uložení ve stavu clean");
-    };
+    playlist.update(&mut conn).await.unwrap();
 
     playlist
         .delete(&mut pool.acquire().await.unwrap())
         .await
         .unwrap();
 
+    let id = *playlist.id();
     let res = PlaylistMetadata::load(id, pool.acquire().await.unwrap()).await;
 
     // Nelze načíst, již smazán
@@ -148,7 +127,10 @@ async fn delete_playlist() {
 async fn delete_item() {
     let pool = common::setup_db_with_bible_and_songs().await;
 
-    let mut playlist = PlaylistMetadata::new("Testovací playlist");
+    let mut conn = pool.acquire().await.unwrap();
+    let mut playlist = PlaylistMetadata::create("Testovací playlist", &mut conn)
+        .await
+        .unwrap();
 
     let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
@@ -170,31 +152,19 @@ async fn delete_item() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
-        .await
-        .unwrap();
-
-    let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
-        id
-    } else {
-        panic!("Playlist není po uložení ve stavu clean");
-    };
+    playlist.update(&mut conn).await.unwrap();
 
     // Měl by smazat píseň
     playlist.delete_item(0).unwrap();
 
     // Uložíme bez písně
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
+    playlist.update(&mut conn).await.unwrap();
+
+    let loaded_playlist = PlaylistMetadata::load(*playlist.id(), pool.acquire().await.unwrap())
         .await
         .unwrap();
 
-    let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
-        .await
-        .unwrap();
-
-    let items = loaded_playlist.get_items();
+    let items = loaded_playlist.items();
 
     assert_eq!(
         items,
@@ -205,10 +175,13 @@ async fn delete_item() {
         }]
     );
 
-    let songs = query!("SELECT * FROM playlist_songs WHERE playlist_id = $1", id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let songs = query!(
+        "SELECT * FROM playlist_songs WHERE playlist_id = $1",
+        *playlist.id()
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
 
     assert!(songs.is_empty());
 }
@@ -216,8 +189,11 @@ async fn delete_item() {
 #[tokio::test]
 async fn swap_items() {
     let pool = common::setup_db_with_bible_and_songs().await;
+    let mut conn = pool.acquire().await.unwrap();
 
-    let mut playlist = PlaylistMetadata::new("Testovací playlist");
+    let mut playlist = PlaylistMetadata::create("Testovací playlist", &mut conn)
+        .await
+        .unwrap();
 
     let song_id = Song::get_available_from_db(&mut pool.acquire().await.unwrap())
         .await
@@ -239,31 +215,21 @@ async fn swap_items() {
         VerseIndex::try_new(Book::John, 1, 1).unwrap(),
     );
 
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
-        .await
-        .unwrap();
+    playlist.update(&mut conn).await.unwrap();
 
-    let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
-        id
-    } else {
-        panic!("Playlist není po uložení ve stavu clean");
-    };
+    let id = *playlist.id();
 
     // Prohodí píseň a pasáž
     playlist.swap_items(0, 1).unwrap();
 
     // Uložíme po prohození
-    playlist
-        .save(&mut pool.acquire().await.unwrap())
-        .await
-        .unwrap();
+    playlist.update(&mut conn).await.unwrap();
 
     let loaded_playlist = PlaylistMetadata::load(id, pool.acquire().await.unwrap())
         .await
         .unwrap();
 
-    let items = loaded_playlist.get_items();
+    let items = loaded_playlist.items();
 
     assert_eq!(
         items,
