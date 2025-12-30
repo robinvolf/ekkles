@@ -327,7 +327,8 @@ impl BiblePicker {
             Message::ReturnToEditor => {
                 debug!("Vracím do editoru playlistů");
                 state.screen = Screen::EditPlaylist(PlaylistEditor::new(picker.playlist.clone()));
-                Task::done(crate::playlist_editor::Message::LoadSongNameCache.into())
+                // Task::done(crate::playlist_editor::Message::LoadSongNameCache.into())
+                todo!()
             }
             Message::PickPassage => match picker.validate() {
                 Ok((from, to)) => {
@@ -622,7 +623,7 @@ mod tests {
             ),
         ];
 
-        let mut picker = BiblePicker::new(PlaylistMetadata::new(""));
+        let mut picker = BiblePicker::new(PlaylistMetadata::mock_new(""));
 
         for (input, expected) in test_cases {
             picker.quick_picker_content = String::from(input);

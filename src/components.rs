@@ -84,19 +84,22 @@ where
         }
     }
 
-    /// Začne načítat zdroj s příslušným `Handle` a vrátí `id`, které je třeba vrátit při [`Self::finish_loading()`], jakmile bude `Task` dokončen
-    pub fn start_loading(&mut self, handle: Handle) -> u32 {
+    /// Začne načítat zdroj s příslušným `Handle` a vrátí `id`, které je třeba vrátit při [`Self::finish_loading()`], jakmile bude `Task` dokončen. Pokud je již ve stavu `Loading`, nic se nestane.
+    pub fn start_loading(&mut self, handle: Handle) -> Option<u32> {
         static TASK_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-        assert!(
-            self.state.is_cold(),
-            "Metoda start_loading() musí být zavolána na LazyLoadable ve stavu Cold"
-        );
+        match self.state {
+            LazyLoadableState::Cold => {
+                let task_id = TASK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-        let task_id = TASK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-
-        self.state = LazyLoadableState::Loading { handle, task_id };
-        task_id
+                self.state = LazyLoadableState::Loading { handle, task_id };
+                Some(task_id)
+            }
+            LazyLoadableState::Loading { .. } => None,
+            LazyLoadableState::Loaded(_) => {
+                panic!("Metoda start_loading() nesmí být zavolána na LazyLoadable ve stavu Loaded")
+            }
+        }
     }
 
     /// Pokud byl ve stavu `Loading`, tak zruší načítání daného zdroje přes jeho [`Handle`]. Vždy na konci nastaví stav na [`LazyLoadableState::Cold`]

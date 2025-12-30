@@ -100,9 +100,6 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                     Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
                 },
             )
-            .chain(Task::done(
-                crate::playlist_editor::Message::LoadSongNameCache.into(),
-            ))
         }
         Message::NewNameChanged(input) => {
             trace!("Změnil se textový vstup pro název nového playlistu");
@@ -141,8 +138,21 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                     }
                     Tab::Playlist => {
                         debug!("Vytvářím nový playlist \"{}\"", new_name);
-                        let new_playlist = PlaylistMetadata::new(new_name);
-                        Task::done(Message::EditPlaylist(new_playlist).into())
+                        let conn = state.db.acquire();
+                        let new_name = new_name.to_owned();
+                        Task::perform(
+                            async move {
+                                let mut conn =
+                                    conn.await.context("Nelze získat připojení k databázi")?;
+                                PlaylistMetadata::create(&new_name, &mut conn).await
+                            },
+                            |res| match res {
+                                Ok(loaded_playlist) => {
+                                    Message::EditPlaylist(loaded_playlist).into()
+                                }
+                                Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                            },
+                        )
                     }
                 }
             } else {
@@ -171,12 +181,16 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                 let conn = conn.await.context("Nelze získat připojení k databázi")?;
                 playlist::get_available(conn).await
             }));
-            let task_id = picker.playlists.start_loading(handle);
-            let task = Task::map(task, move |res| match res {
-                Ok(pls) => Message::PlaylistsLoaded(pls, task_id).into(),
-                Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-            });
-            task
+            match picker.playlists.start_loading(handle) {
+                Some(task_id) => {
+                    let task = Task::map(task, move |res| match res {
+                        Ok(pls) => Message::PlaylistsLoaded(pls, task_id).into(),
+                        Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                    });
+                    task
+                }
+                None => Task::none(),
+            }
         }
         Message::EditSong(song) => {
             debug!("Vybrána píseň, přecházím na editaci {:#?}", song);

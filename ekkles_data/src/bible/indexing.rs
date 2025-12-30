@@ -206,6 +206,45 @@ impl Display for VerseIndex {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct VerseIndices {
+    from: VerseIndex,
+    to: VerseIndex,
+}
+
+impl From<(VerseIndex, VerseIndex)> for VerseIndices {
+    fn from((from, to): (VerseIndex, VerseIndex)) -> Self {
+        VerseIndices { from, to }
+    }
+}
+
+impl Display for VerseIndices {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let same_book = self.from.book == self.to.book;
+        let same_chapter = self.from.chapter == self.to.chapter;
+        let same_verse = self.from.verse_number == self.to.verse_number;
+
+        match (same_book, same_chapter, same_verse) {
+            (true, true, true) => write!(f, "{}", self.from),
+            (true, true, false) => write!(
+                f,
+                "{} {}:{}-{}",
+                self.from.book, self.from.chapter, self.from.verse_number, self.to.verse_number
+            ),
+            (true, false, false) => write!(
+                f,
+                "{} {}:{}-{}:{}",
+                self.from.book,
+                self.from.chapter,
+                self.from.verse_number,
+                self.to.chapter,
+                self.to.verse_number
+            ),
+            _ => write!(f, "{} - {}", self.from, self.to),
+        }
+    }
+}
+
 impl VerseIndex {
     /// Pokusi se zkonstruovat nový index verše. Pokud taková kombinace knihy,
     /// kapitoly a verše neexistuje, vrátí None.

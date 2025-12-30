@@ -1,33 +1,42 @@
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use ekkles_data::{
     Song,
-    playlist::{self, PlaylistMetadata, PlaylistMetadataStatus},
+    bible::indexing::{Passage, VerseIndices},
+    playlist::{self, PlaylistItem, PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
     Element, Length, Task,
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, row, text, text_input},
+    futures::{FutureExt, future::try_join_all},
+    widget::{button, column, container, row, table, text, text_input},
 };
 use log::{debug, trace};
+use sqlx::{Sqlite, pool::PoolConnection};
 use tokio::sync::Mutex;
 
 use crate::{
-    Ekkles, Screen, bible_picker::BiblePicker, components::playlist_item_styles,
-    presenter::Presenter, song_picker::SongPicker, start_screen::StartScreen,
+    Ekkles, Screen,
+    bible_picker::BiblePicker,
+    components::{LazyLoadable, LazyLoadableState, playlist_item_styles},
+    presenter::Presenter,
+    start_screen::StartScreen,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    LoadSongNameCache,
-    SongNameCacheLoaded(Vec<(i64, String)>),
     SavePlaylist,
     PlaylistSavedSuccessfully,
     SavePlaylistAsClicked,
     NewPlaylistNameChanged(String),
     ValidateNewPlaylistName,
     InvalidNewPlaylistName(String),
+    LoadPreview,
+    PreviewLoaded {
+        preview: Vec<PlaylistItem>,
+        task_id: u32,
+    },
     SavePlaylistAs,
     DeletePlaylist,
     SaveAndExit,
@@ -50,95 +59,117 @@ impl From<Message> for crate::Message {
 
 #[derive(Debug)]
 pub struct PlaylistEditor {
-    /// Editovaný playlist (potřebujeme ho zabalit do `Arc<Mutex<>>`, protože když jej ukládáme,
-    /// mutujeme jeho stav a protože daný future předáme iced runtime, nemůže to být reference).
-    playlist: Arc<Mutex<PlaylistMetadata>>,
+    /// Aktuálně upravovaný playlist
+    playlist: PlaylistMetadata,
+    /// Jednotlivé položky playlistu pro náhled
+    playlist_preview_items: LazyLoadable<Vec<PlaylistItem>, Message>,
+    /// Název playlistu pro "uložit jako"
     new_playlist_name: String,
+    /// Chybová hláška, v případě špatného nového názvu playlistu
     new_playlist_err_msg: String,
-    song_name_cache: Option<Vec<(i64, String)>>,
+    /// Index právě vybrané položky. `Option`, protože je možné mít prázdný playlist.
     selected_index: Option<usize>,
 }
 
 impl PlaylistEditor {
     pub fn new(playlist: PlaylistMetadata) -> Self {
         Self {
-            playlist: Arc::new(Mutex::new(playlist)),
+            playlist,
+            playlist_preview_items: LazyLoadable::new(Message::LoadPreview),
             new_playlist_name: String::new(),
             new_playlist_err_msg: String::new(),
-            song_name_cache: None,
             selected_index: None,
         }
     }
 
+    pub async fn new_load(playlist_id: i64, conn: PoolConnection<Sqlite>) -> Result<Self> {
+        let playlist = PlaylistMetadata::load(playlist_id, conn).await?;
+        Ok(Self::new(playlist))
+    }
+
     pub fn view(&self) -> Element<Message> {
-        let (playlist_status, playlist_name) = {
-            // Tady blokuju čekáním na mutex v GUI kódu, ale contention tohoto mutexu
-            // je prakticky nulová (zamykám ho jen při zápisu do DB, který je velice rychlý).
-            let playlist = self.playlist.blocking_lock();
-            let status = playlist.get_status();
-            let name = playlist.get_name().to_string();
-            (status, name)
-        }; // V separátním scope, abychom tady dropli mutex
+        let playlist_name = self.playlist.name();
 
-        let save_button_msg = match playlist_status {
-            playlist::PlaylistMetadataStatus::Transient => Some(Message::SavePlaylist),
-            playlist::PlaylistMetadataStatus::Clean(_) => None,
-            playlist::PlaylistMetadataStatus::Dirty(_) => Some(Message::SavePlaylist),
-        };
+        // let playlist_items = self
+        //     .playlist
+        //     .items()
+        //     .iter()
+        //     .enumerate()
+        //     .map(|(index, item)| {
+        //         let msg = if self
+        //             .selected_index
+        //             .is_some_and(|selected| selected == index)
+        //         {
+        //             None
+        //         } else {
+        //             Some(Message::SelectItem(index))
+        //         };
 
-        // TODO: Vyřešit blokující lock v GUI kódu, problém je, že `playlist_items`
-        // je iterátor a potřebuje, aby playlist byla validní reference, dokud nevrátíme
-        // zkonstruované GUI
-        let playlist = self.playlist.blocking_lock();
+        //         let content = match item {
+        //             playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => "Pasáž",
+        //             playlist::PlaylistItemMetadata::Song(sought_id) => "Píseň",
+        //         };
 
-        let playlist_items = playlist
-            .get_items()
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                let msg = if self
-                    .selected_index
-                    .is_some_and(|selected| selected == index)
-                {
-                    None
-                } else {
-                    Some(Message::SelectItem(index))
-                };
-
-                match item {
-                    playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => {
-                        button(text(format!("Pasáž {} - {}", from, to)))
-                            .style(if msg.is_none() {
-                                playlist_item_styles::song_selected
-                            } else {
-                                playlist_item_styles::song
-                            })
-                            .on_press_maybe(msg)
-                            .width(Length::Fill)
-                            .into()
-                    }
-                    playlist::PlaylistItemMetadata::Song(sought_id) => button(text(format!(
-                        "Píseň {}",
-                        self.song_name_cache
-                            .as_ref()
-                            .map(|cache| cache
-                                .iter()
-                                .find(|(id, _)| id == sought_id)
-                                .unwrap()
-                                .1
-                                .as_str())
-                            .unwrap_or("...")
-                    )))
-                    .style(if msg.is_none() {
-                        playlist_item_styles::passage_selected
+        //         button(content)
+        //             .style(if msg.is_none() {
+        //                 playlist_item_styles::song_selected
+        //             } else {
+        //                 playlist_item_styles::song
+        //             })
+        //             .on_press_maybe(msg)
+        //             .width(Length::Fill)
+        //             .into()
+        //     });
+        let playlist_items = table(
+            [table::column(
+                "Název",
+                |(index, item): (usize, &PlaylistItemMetadata)| {
+                    let msg = if self
+                        .selected_index
+                        .is_some_and(|selected| selected == index)
+                    {
+                        None
                     } else {
-                        playlist_item_styles::passage
-                    })
-                    .on_press_maybe(msg)
-                    .width(Length::Fill)
-                    .into(),
-                }
-            });
+                        Some(Message::SelectItem(index))
+                    };
+
+                    let content: Element<Message> =
+                        match (item, self.playlist_preview_items.state()) {
+                            (_, LazyLoadableState::Cold | LazyLoadableState::Loading { .. }) => {
+                                self.playlist_preview_items.view_not_loaded().into()
+                            }
+                            (
+                                PlaylistItemMetadata::BiblePassage { .. },
+                                LazyLoadableState::Loaded(preview_items),
+                            ) => {
+                                let preview_item = &preview_items[index];
+                                let passage = preview_item.as_bible_passage().unwrap();
+                                let indices = VerseIndices::from(passage.get_range());
+                                text!("{} {}", passage.get_translation_name(), indices).into()
+                            }
+                            (
+                                PlaylistItemMetadata::Song(_),
+                                LazyLoadableState::Loaded(preview_items),
+                            ) => {
+                                let preview_item = &preview_items[index];
+                                let song = preview_item.as_song().unwrap();
+                                text!("Píseň {}", song.title).into()
+                            }
+                        };
+
+                    button(content)
+                        .style(if msg.is_none() {
+                            playlist_item_styles::song_selected
+                        } else {
+                            playlist_item_styles::song
+                        })
+                        .on_press_maybe(msg)
+                        .width(Length::Fill)
+                },
+            )],
+            self.playlist.items().iter().enumerate(),
+        )
+        .padding(30);
 
         let item_manipulation = match self.selected_index {
             Some(index) => {
@@ -153,7 +184,7 @@ impl PlaylistEditor {
                     button("Posunout dolů")
                         // len() - 1 je v pořádku, nikdy nepodteče, tento kód se provede pouze
                         // s vybranou položkou, nelze mít vybranou položku na prázdném seznamu
-                        .on_press_maybe(if index == playlist.get_items().len() - 1 {
+                        .on_press_maybe(if index == self.playlist.items().len() - 1 {
                             None
                         } else {
                             Some(Message::MoveItemDown(index))
@@ -174,7 +205,7 @@ impl PlaylistEditor {
                     column![
                         text(format!("Edituješ playlist \"{}\"", playlist_name)),
                         button("Uložit")
-                            .on_press_maybe(save_button_msg)
+                            .on_press(Message::SavePlaylist)
                             .width(Length::Fill),
                         row![
                             text_input("Název nového playlistu", &self.new_playlist_name)
@@ -215,10 +246,7 @@ impl PlaylistEditor {
                 ]
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Center),
-                column(playlist_items)
-                    .padding(30)
-                    .spacing(5)
-                    .width(Length::FillPortion(2)),
+                playlist_items.width(Length::FillPortion(2)),
                 if self.selected_index.is_some() {
                     item_manipulation
                 } else {
@@ -250,8 +278,7 @@ impl PlaylistEditor {
                 Task::perform(
                     async move {
                         let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                        let mut playlist = playlist.lock().await;
-                        playlist.save(&mut conn).await
+                        playlist.update(&mut conn).await
                     },
                     |res| match res {
                         Ok(_) => Message::PlaylistSavedSuccessfully.into(),
@@ -266,18 +293,17 @@ impl PlaylistEditor {
                 );
                 let conn = state.db.acquire();
                 let new_playlist_name = editor.new_playlist_name.clone();
-                let playlist = editor.playlist.clone();
+                let new_playlist_items = editor.playlist.items().to_vec();
+
                 Task::perform(
                     async move {
-                        let mut playlist = playlist.lock().await;
-
-                        *playlist = playlist::PlaylistMetadata::from_other(
-                            &new_playlist_name,
-                            &mut playlist,
-                        );
-
                         let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                        playlist.save(&mut conn).await
+                        PlaylistMetadata::create_with_items(
+                            &new_playlist_name,
+                            &new_playlist_items,
+                            &mut conn,
+                        )
+                        .await
                     },
                     |res| match res {
                         Ok(_) => Message::PlaylistSavedSuccessfully.into(),
@@ -292,19 +318,12 @@ impl PlaylistEditor {
                 Task::perform(
                     async move {
                         let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                        let mut playlist = playlist.lock().await;
                         playlist
-                            .save(&mut conn)
+                            .update(&mut conn)
                             .await
                             .context("Nelze uložit playlist")?;
 
-                        let id = if let PlaylistMetadataStatus::Clean(id) = playlist.get_status() {
-                            id
-                        } else {
-                            unreachable!() // Právě jsme uložili playlist, musí být ve stavu Clean
-                        };
-
-                        Presenter::try_new(id, &mut conn).await
+                        Presenter::try_new(*playlist.id(), &mut conn).await
                     },
                     |res| match res {
                         Ok(presenter) => Message::StartPresentation(presenter).into(),
@@ -312,7 +331,6 @@ impl PlaylistEditor {
                     },
                 )
             }
-
             Message::StartPresentation(presenter) => {
                 debug!("Přecházím na prezentační obrazovku");
                 state.screen = Screen::Presenter(presenter);
@@ -320,15 +338,16 @@ impl PlaylistEditor {
             }
             Message::AddBiblePassage => {
                 debug!("Přecházím na výběr playlistu");
-                let playlist = editor.playlist.blocking_lock().clone();
-                state.screen = Screen::PickBible(BiblePicker::new(playlist));
-                Task::done(crate::Message::BiblePicker(
-                    crate::bible_picker::Message::LoadTranslations,
-                ))
+                // let playlist = editor.playlist.blocking_lock().clone();
+                // state.screen = Screen::PickBible(BiblePicker::new(playlist));
+                // Task::done(crate::Message::BiblePicker(
+                //     crate::bible_picker::Message::LoadTranslations,
+                // ))
+                todo!()
             }
             Message::AddSong => {
                 debug!("Přecházím na výběr písně");
-                let playlist = editor.playlist.blocking_lock().clone();
+                // let playlist = editor.playlist.blocking_lock().clone();
                 todo!();
                 // state.screen = Screen::PickSong(SongPicker::new(playlist));
                 // Task::done(crate::Message::SongPicker(
@@ -386,19 +405,15 @@ impl PlaylistEditor {
             }
             Message::DeletePlaylist => {
                 {
-                    debug!(
-                        "Mažu playlist \"{}\"",
-                        editor.playlist.blocking_lock().get_name()
-                    )
+                    debug!("Mažu playlist \"{}\"", editor.playlist.name())
                 }
 
                 let conn = state.db.acquire();
-                let playlist = editor.playlist.clone();
+                let id = *editor.playlist.id();
                 Task::perform(
                     async move {
                         let mut conn = conn.await?;
-                        let mut playlist = playlist.lock().await;
-                        playlist.delete(&mut conn).await
+                        PlaylistMetadata::delete_by_id(id, &mut conn).await
                     },
                     |res| match res {
                         Ok(_) => Message::ReturnToPlaylistPicker.into(),
@@ -411,58 +426,23 @@ impl PlaylistEditor {
                 Task::none()
             }
             Message::SaveAndExit => {
-                let playlist_status = { editor.playlist.blocking_lock().get_status() };
-
-                match playlist_status {
-                    PlaylistMetadataStatus::Transient | PlaylistMetadataStatus::Dirty(_) => {
-                        debug!("Ukládám playlist a vracím se k výběru playlistů");
-                        let conn = state.db.acquire();
-                        let playlist = editor.playlist.clone();
-                        Task::perform(
-                            async move {
-                                let mut conn =
-                                    conn.await.context("Nelze získat připojení k databázi")?;
-                                let mut playlist = playlist.lock().await;
-                                playlist.save(&mut conn).await
-                            },
-                            |res| res,
-                        )
-                        .then(|res| {
-                            debug!("Playlist uložen, vracím se na výběr playlistů");
-                            match res {
-                                Ok(_) => Task::done(Message::ReturnToPlaylistPicker.into()),
-                                Err(e) => Task::done(crate::Message::FatalErrorOccured(format!(
-                                    "{:?}",
-                                    e
-                                ))),
-                            }
-                        })
-                    }
-                    PlaylistMetadataStatus::Clean(_) => {
-                        debug!("Playlist nepotřebuje uložit, vracím se rovnou na výběr playlistů");
-                        Task::done(Message::ReturnToPlaylistPicker.into())
-                    }
-                }
-            }
-            Message::LoadSongNameCache => {
-                debug!("Načítám cache názvů písní");
+                debug!("Ukládám playlist a vracím se k výběru playlistů");
                 let conn = state.db.acquire();
+                let playlist = editor.playlist.clone();
                 Task::perform(
                     async move {
                         let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
-                        Song::get_available_from_db(&mut conn).await
+                        playlist.update(&mut conn).await
                     },
                     |res| res,
                 )
-                .then(|res| match res {
-                    Ok(cache) => Task::done(Message::SongNameCacheLoaded(cache).into()),
-                    Err(e) => Task::done(crate::Message::FatalErrorOccured(format!("{:?}", e))),
+                .then(|res| {
+                    debug!("Playlist uložen, vracím se na výběr playlistů");
+                    match res {
+                        Ok(_) => Task::done(Message::ReturnToPlaylistPicker.into()),
+                        Err(e) => Task::done(crate::Message::FatalErrorOccured(format!("{:?}", e))),
+                    }
                 })
-            }
-            Message::SongNameCacheLoaded(items) => {
-                debug!("Načtena cache názvů písní");
-                editor.song_name_cache = Some(items);
-                Task::none()
             }
             Message::SelectItem(index) => {
                 debug!("Vybrána položka playlistu {index}");
@@ -475,14 +455,11 @@ impl PlaylistEditor {
                     .selected_index
                     .as_mut()
                     .expect("Při posunování vybrané položka musí být položka vybrána") -= 1;
-                let playlist = editor.playlist.clone();
-                Task::future(async move {
-                    let mut playlist = playlist.lock().await;
-                    playlist
-                        .swap_items(index, index - 1)
-                        .expect("Nelze posunout položku nahoru");
-                })
-                .discard()
+                editor
+                    .playlist
+                    .swap_items(index, index - 1)
+                    .expect("Nelze posunout položku nahoru");
+                Task::none()
             }
             Message::MoveItemDown(index) => {
                 debug!("Posunuji položku na indexu {index} na {}", index + 1);
@@ -491,24 +468,45 @@ impl PlaylistEditor {
                     .as_mut()
                     .expect("Při posunování vybrané položka musí být položka vybrána") += 1;
 
-                let playlist = editor.playlist.clone();
-                Task::future(async move {
-                    let mut playlist = playlist.lock().await;
-                    playlist
-                        .swap_items(index, index + 1)
-                        .expect("Nelze posunout položku dolů");
-                })
-                .discard()
+                editor
+                    .playlist
+                    .swap_items(index, index + 1)
+                    .expect("Nelze posunout položku dolů");
+                Task::none()
             }
             Message::DeleteItem(index) => {
                 debug!("Mažu položku s indexem {index}");
                 editor.selected_index = None;
-                let playlist = editor.playlist.clone();
-                Task::future(async move {
-                    let mut playlist = playlist.lock().await;
-                    playlist.delete_item(index).expect("Nelze smazat položku");
-                })
-                .discard()
+                editor
+                    .playlist
+                    .delete_item(index)
+                    .expect("Nelze smazat položku");
+                Task::none()
+            }
+            Message::LoadPreview => {
+                let conn = state.db.acquire();
+                let items = editor.playlist.items().to_vec();
+                let (task, handle) = Task::abortable(Task::future(async move {
+                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    let items = items.iter();
+                    PlaylistItem::load_list(items, &mut conn).await
+                }));
+                match editor.playlist_preview_items.start_loading(handle) {
+                    Some(task_id) => {
+                        let task = Task::map(task, move |res| match res {
+                            Ok(preview) => Message::PreviewLoaded { preview, task_id }.into(),
+                            Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                        });
+                        task
+                    }
+                    None => Task::none(),
+                }
+            }
+            Message::PreviewLoaded { preview, task_id } => {
+                editor
+                    .playlist_preview_items
+                    .finish_loading(preview, task_id);
+                Task::none()
             }
         }
     }

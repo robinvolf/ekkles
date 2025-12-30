@@ -107,12 +107,16 @@ impl SongPicker {
                             .collect()
                     })
                 }));
-                let task_id = self.songs.start_loading(handle);
-                let task = Task::map(task, move |res| match res {
-                    Ok(songs) => Message::SongsLoaded(songs, task_id).into(),
-                    Err(e) => Message::FatalError(format!("{:?}", e)),
-                });
-                task
+                match self.songs.start_loading(handle) {
+                    Some(task_id) => {
+                        let task = Task::map(task, move |res| match res {
+                            Ok(songs) => Message::SongsLoaded(songs, task_id).into(),
+                            Err(e) => Message::FatalError(format!("{:?}", e)),
+                        });
+                        task
+                    }
+                    None => Task::none(),
+                }
             }
             Message::SongsLoaded(song_picker_items, task_id) => {
                 debug!("Písně načteny: {:#?}", &song_picker_items);
@@ -136,16 +140,21 @@ impl SongPicker {
                     let mut conn = conn.await?;
                     Song::load_from_db(item.id, &mut conn).await
                 }));
-                let task_id = self
+                match self
                     .preview
                     .as_mut()
                     .expect("Při zavolání LoadPreview již musí být preview Some()")
-                    .start_loading(handle);
-                let task = Task::map(task, move |res| match res {
-                    Ok(song) => Message::PreviewLoaded(song, task_id).into(),
-                    Err(e) => Message::FatalError(format!("{:?}", e)),
-                });
-                task
+                    .start_loading(handle)
+                {
+                    Some(task_id) => {
+                        let task = Task::map(task, move |res| match res {
+                            Ok(song) => Message::PreviewLoaded(song, task_id).into(),
+                            Err(e) => Message::FatalError(format!("{:?}", e)),
+                        });
+                        task
+                    }
+                    None => Task::none(),
+                }
             }
             Message::PreviewLoaded(song, task_id) => {
                 debug!("Načetlo se previw pro píseň {}", song.title);

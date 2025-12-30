@@ -23,6 +23,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDateTime, SubsecRound, Utc};
+use futures::future::try_join_all;
 use sqlx::{Acquire, Sqlite, Transaction, pool::PoolConnection, query};
 
 /// Hodnota sloupce 'kind' v tabulce 'playlist_parts' pro píseň
@@ -289,7 +290,7 @@ pub struct PlaylistMetadata {
 }
 
 impl PlaylistMetadata {
-    /// Vytvoří v databázi nový playlist s názvem `name`.
+    /// Vytvoří v databázi nový _prázdný_ playlist s názvem `name`.
     pub async fn create(name: &str, conn: &mut PoolConnection<Sqlite>) -> Result<Self> {
         let created = Utc::now().trunc_subsecs(0);
 
@@ -323,6 +324,30 @@ impl PlaylistMetadata {
         })
     }
 
+    /// Vytvoří v databázi nový playlist s názvem `name` a okamžitě do něj vloží `items`
+    pub async fn create_with_items(
+        name: &str,
+        items: &[PlaylistItemMetadata],
+        conn: &mut PoolConnection<Sqlite>,
+    ) -> Result<Self> {
+        let mut playlist = PlaylistMetadata::create(name, conn).await?;
+
+        for item in items {
+            match item {
+                PlaylistItemMetadata::BiblePassage {
+                    translation_id,
+                    from,
+                    to,
+                } => playlist.push_bible_passage(*translation_id, *from, *to),
+                PlaylistItemMetadata::Song(id) => playlist.push_song(*id),
+            }
+        }
+
+        playlist.update(conn).await?;
+
+        Ok(playlist)
+    }
+
     /// Načte existující playlist s daným ID z databáze. Pokud takový playlist neexistuje
     /// nebo se něco v pokazí při načítání, vrátí Error.
     pub async fn load(id: i64, mut conn: PoolConnection<Sqlite>) -> Result<Self> {
@@ -348,10 +373,18 @@ impl PlaylistMetadata {
         })
     }
 
-    /// Smaže playlist z databáze a nastaví jeho stav
-    /// na [`PlaylistMetadataStatus::Transient`].
-    pub async fn delete(&mut self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
+    /// Smaže playlist z databáze
+    pub async fn delete(&self, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
         query!("DELETE FROM playlists WHERE id = $1", self.id)
+            .execute(conn.as_mut())
+            .await
+            .context("Nelze smazat playlist z databáze")
+            .map(|_| ())
+    }
+
+    /// Smaže playlist s `id` z databáze
+    pub async fn delete_by_id(id: i64, conn: &mut PoolConnection<Sqlite>) -> Result<()> {
+        query!("DELETE FROM playlists WHERE id = $1", id)
             .execute(conn.as_mut())
             .await
             .context("Nelze smazat playlist z databáze")
@@ -473,13 +506,75 @@ impl PlaylistMetadata {
 
         Ok(())
     }
+
+    /// Pro testování neměla by se použít v normálním kódu
+    pub fn mock_new(name: &str) -> Self {
+        let created = Utc::now().trunc_subsecs(0);
+
+        Self {
+            id: 0,
+            name: name.into(),
+            created,
+            items: Vec::new(),
+        }
+    }
 }
 
-#[derive(Debug)]
 /// Playlist se skládá z vícero druhů položek, tento enum je rozlišuje.
+#[derive(Debug, Clone)]
 pub enum PlaylistItem {
     BiblePassage(Passage),
     Song(Song),
+}
+
+impl PlaylistItem {
+    pub async fn load_list(
+        items: impl IntoIterator<Item = &PlaylistItemMetadata>,
+        conn: &mut PoolConnection<Sqlite>,
+    ) -> Result<Vec<Self>> {
+        let mut loaded_items = Vec::new();
+
+        for item in items.into_iter() {
+            let item = PlaylistItem::load(item, conn).await?;
+            loaded_items.push(item);
+        }
+
+        Ok(loaded_items)
+    }
+
+    pub async fn load(
+        item: &PlaylistItemMetadata,
+        conn: &mut PoolConnection<Sqlite>,
+    ) -> Result<Self> {
+        match item {
+            PlaylistItemMetadata::BiblePassage {
+                translation_id,
+                from,
+                to,
+            } => Passage::load(*from, *to, *translation_id, conn)
+                .await
+                .map(|p| PlaylistItem::BiblePassage(p)),
+            PlaylistItemMetadata::Song(id) => Song::load_from_db(*id, conn)
+                .await
+                .map(|s| PlaylistItem::Song(s)),
+        }
+    }
+
+    pub fn as_bible_passage(&self) -> Option<&Passage> {
+        if let Self::BiblePassage(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_song(&self) -> Option<&Song> {
+        if let Self::Song(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
 }
 
 /// Struktura reprezentující playlist, která vlastní obsah svých položek. Je tedy "nezávislá",
