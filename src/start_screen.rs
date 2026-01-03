@@ -175,7 +175,6 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
         }
         Message::LoadPlaylists => {
             debug!("Načítám seznam playlistů");
-            // Vyrobíme future, kterou awaitneme v asynchronním bloku v Perform a ta nám vydá connection
             let conn = state.db.acquire();
             let (task, handle) = Task::abortable(Task::future(async move {
                 let conn = conn.await.context("Nelze získat připojení k databázi")?;

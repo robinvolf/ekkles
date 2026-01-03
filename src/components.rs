@@ -73,10 +73,10 @@ where
                 sensor(text("Načítám obsah z databáze"))
                     .on_show(|_| self.msg_start_loading.clone()),
             )
-            .center(Length::Fill)
+            .center(Length::Shrink)
             .style(container::secondary),
             LazyLoadableState::Loading { .. } => container(text("Načítám obsah z databáze"))
-                .center(Length::Fill)
+                .center(Length::Shrink)
                 .style(container::secondary),
             LazyLoadableState::Loaded(_) => panic!(
                 "Metoda view_not_loaded() nemůže být zavoláno na LazyLoadable ve stavu Loaded"

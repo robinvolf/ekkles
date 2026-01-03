@@ -90,86 +90,68 @@ impl PlaylistEditor {
     pub fn view(&self) -> Element<Message> {
         let playlist_name = self.playlist.name();
 
-        // let playlist_items = self
-        //     .playlist
-        //     .items()
-        //     .iter()
-        //     .enumerate()
-        //     .map(|(index, item)| {
-        //         let msg = if self
-        //             .selected_index
-        //             .is_some_and(|selected| selected == index)
-        //         {
-        //             None
-        //         } else {
-        //             Some(Message::SelectItem(index))
-        //         };
+        let playlist_item_content_function = |(index, item): (usize, &PlaylistItemMetadata)| {
+            let msg = if self
+                .selected_index
+                .is_some_and(|selected| selected == index)
+            {
+                None
+            } else {
+                Some(Message::SelectItem(index))
+            };
 
-        //         let content = match item {
-        //             playlist::PlaylistItemMetadata::BiblePassage { from, to, .. } => "Pasáž",
-        //             playlist::PlaylistItemMetadata::Song(sought_id) => "Píseň",
-        //         };
+            let content: Element<Message> = match (item, self.playlist_preview_items.state()) {
+                (_, LazyLoadableState::Cold | LazyLoadableState::Loading { .. }) => {
+                    self.playlist_preview_items.view_not_loaded().into()
+                }
+                (
+                    PlaylistItemMetadata::BiblePassage { .. },
+                    LazyLoadableState::Loaded(preview_items),
+                ) => {
+                    let preview_item = &preview_items[index];
+                    let passage = preview_item.as_bible_passage().unwrap();
+                    let indices = VerseIndices::from(passage.get_range());
+                    text!("{} {}", passage.get_translation_name(), indices).into()
+                }
+                (PlaylistItemMetadata::Song(_), LazyLoadableState::Loaded(preview_items)) => {
+                    let preview_item = &preview_items[index];
+                    let song = preview_item.as_song().unwrap();
+                    text!("Píseň {}", song.title).into()
+                }
+            };
 
-        //         button(content)
-        //             .style(if msg.is_none() {
-        //                 playlist_item_styles::song_selected
-        //             } else {
-        //                 playlist_item_styles::song
-        //             })
-        //             .on_press_maybe(msg)
-        //             .width(Length::Fill)
-        //             .into()
-        //     });
+            button(content)
+                .style(match item {
+                    PlaylistItemMetadata::BiblePassage { .. } if msg.is_none() => {
+                        playlist_item_styles::passage_selected
+                    }
+                    PlaylistItemMetadata::BiblePassage { .. } if msg.is_some() => {
+                        playlist_item_styles::passage
+                    }
+                    PlaylistItemMetadata::Song(_) if msg.is_none() => {
+                        playlist_item_styles::song_selected
+                    }
+                    PlaylistItemMetadata::Song(_) if msg.is_some() => playlist_item_styles::song,
+                    _ => unreachable!(),
+                })
+                .on_press_maybe(msg)
+                .width(Length::Fill)
+        };
+
         let playlist_items = table(
-            [table::column(
-                "Název",
-                |(index, item): (usize, &PlaylistItemMetadata)| {
-                    let msg = if self
-                        .selected_index
-                        .is_some_and(|selected| selected == index)
-                    {
-                        None
-                    } else {
-                        Some(Message::SelectItem(index))
-                    };
-
-                    let content: Element<Message> =
-                        match (item, self.playlist_preview_items.state()) {
-                            (_, LazyLoadableState::Cold | LazyLoadableState::Loading { .. }) => {
-                                self.playlist_preview_items.view_not_loaded().into()
-                            }
-                            (
-                                PlaylistItemMetadata::BiblePassage { .. },
-                                LazyLoadableState::Loaded(preview_items),
-                            ) => {
-                                let preview_item = &preview_items[index];
-                                let passage = preview_item.as_bible_passage().unwrap();
-                                let indices = VerseIndices::from(passage.get_range());
-                                text!("{} {}", passage.get_translation_name(), indices).into()
-                            }
-                            (
-                                PlaylistItemMetadata::Song(_),
-                                LazyLoadableState::Loaded(preview_items),
-                            ) => {
-                                let preview_item = &preview_items[index];
-                                let song = preview_item.as_song().unwrap();
-                                text!("Píseň {}", song.title).into()
-                            }
-                        };
-
-                    button(content)
-                        .style(if msg.is_none() {
-                            playlist_item_styles::song_selected
-                        } else {
-                            playlist_item_styles::song
-                        })
-                        .on_press_maybe(msg)
-                        .width(Length::Fill)
-                },
-            )],
+            [
+                table::column("Druh", |(_, &item)| match item {
+                    PlaylistItemMetadata::BiblePassage { .. } => button("Pasáž"),
+                    PlaylistItemMetadata::Song(_) => button("Píseň"),
+                })
+                .width(Length::Shrink),
+                table::column("Název", playlist_item_content_function)
+                    .width(Length::FillPortion(1)),
+            ],
             self.playlist.items().iter().enumerate(),
         )
-        .padding(30);
+        .separator(1)
+        .padding(0);
 
         let item_manipulation = match self.selected_index {
             Some(index) => {
@@ -259,7 +241,6 @@ impl PlaylistEditor {
             .padding(10)
             .center_x(Length::FillPortion(1))
         ])
-        // .explain(Color::BLACK)
     }
 
     /// Update funkce pro editor. Pokud je tato funkce zavolána nad jinou obrazovkou
@@ -487,6 +468,7 @@ impl PlaylistEditor {
                 let conn = state.db.acquire();
                 let items = editor.playlist.items().to_vec();
                 let (task, handle) = Task::abortable(Task::future(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
                     let items = items.iter();
                     PlaylistItem::load_list(items, &mut conn).await
