@@ -67,6 +67,10 @@ where
         &self.state
     }
 
+    pub fn state_mut(&mut self) -> &mut LazyLoadableState<T> {
+        &mut self.state
+    }
+
     pub fn view_not_loaded(&self) -> Container<M> {
         let text = text("Načítám obsah z databáze").wrapping(text::Wrapping::None);
 

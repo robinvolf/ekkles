@@ -29,13 +29,14 @@ use ekkles_data::{
     playlist::{self, PlaylistItem, PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
-    Background, Color, Element, Length, Task, Theme,
+    Background, Color, Element, Length, Subscription, Task, Theme,
     alignment::{Horizontal, Vertical},
     color,
     futures::{FutureExt, future::try_join_all},
+    keyboard::{Event, Key, Modifiers, key},
     widget::{button, column, container, row, scrollable, table, text, text_input},
 };
-use log::{debug, trace};
+use log::{debug, error, trace, warn};
 use sqlx::{Sqlite, pool::PoolConnection};
 
 use crate::{
@@ -68,8 +69,10 @@ pub enum Message {
     AddBiblePassage,
     AddSong,
     SelectItem(usize),
-    MoveItemUp(usize),
-    MoveItemDown(usize),
+    MoveSelectionUp,
+    MoveSelectionDown,
+    MoveItemUp,
+    MoveItemDown,
     DeleteItem(usize),
 }
 
@@ -83,7 +86,7 @@ impl From<Message> for crate::Message {
 pub struct PlaylistEditor {
     /// Aktuálně upravovaný playlist
     playlist: PlaylistMetadata,
-    /// Jednotlivé položky playlistu pro náhled
+    /// Jednotivé položky playlistu pro náhled
     playlist_preview_items: LazyLoadable<Vec<PlaylistItem>, Message>,
     /// Název playlistu pro "uložit jako"
     new_playlist_name: String,
@@ -245,7 +248,7 @@ impl PlaylistEditor {
                         .on_press_maybe(if index == 0 {
                             None
                         } else {
-                            Some(Message::MoveItemUp(index))
+                            Some(Message::MoveItemUp)
                         })
                         .width(Length::Fill),
                     button("Posunout dolů")
@@ -254,7 +257,7 @@ impl PlaylistEditor {
                         .on_press_maybe(if index == self.playlist.items().len() - 1 {
                             None
                         } else {
-                            Some(Message::MoveItemDown(index))
+                            Some(Message::MoveItemDown)
                         })
                         .width(Length::Fill),
                     button("Smazat položku")
@@ -265,6 +268,28 @@ impl PlaylistEditor {
             }
             None => column([]),
         };
+
+        let keyboard_shortcuts_help = column(
+            Self::keyboard_shortcuts()
+                .into_iter()
+                .map(|(key, modifiers, _msg, help)| {
+                    text(display_help(&key, &modifiers, help)).into()
+                }),
+        );
+
+        let right_column = column![
+            if self.selected_index.is_some() {
+                item_manipulation
+            } else {
+                column([])
+            }
+            .padding(30)
+            .spacing(10)
+            .height(Length::Fill),
+            container(keyboard_shortcuts_help)
+                .align_bottom(Length::Fill)
+                .padding(30)
+        ];
 
         Into::<Element<Message>>::into(column![
             container(row![
@@ -314,14 +339,7 @@ impl PlaylistEditor {
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Center),
                 playlist_items.width(Length::FillPortion(3)),
-                if self.selected_index.is_some() {
-                    item_manipulation
-                } else {
-                    column([])
-                }
-                .width(Length::FillPortion(1))
-                .padding(30)
-                .spacing(10),
+                right_column.width(Length::FillPortion(1)),
             ])
             .padding(10)
             .center_x(Length::FillPortion(1))
@@ -515,29 +533,58 @@ impl PlaylistEditor {
                 editor.selected_index = Some(index);
                 Task::none()
             }
-            Message::MoveItemUp(index) => {
-                debug!("Posunuji položku na indexu {index} na {}", index - 1);
-                *editor
-                    .selected_index
-                    .as_mut()
-                    .expect("Při posunování vybrané položka musí být položka vybrána") -= 1;
-                editor
-                    .playlist
-                    .swap_items(index, index - 1)
-                    .expect("Nelze posunout položku nahoru");
+            Message::MoveItemUp => {
+                match editor.selected_index {
+                    Some(index) if index > 0 => {
+                        debug!("Posunuji položku na indexu {index} na {}", index - 1);
+                        *editor
+                            .selected_index
+                            .as_mut()
+                            .expect("Při posunování vybrané položka musí být položka vybrána") -= 1;
+                        editor
+                            .playlist
+                            .swap_items(index, index - 1)
+                            .expect("Nelze posunout položku nahoru");
+
+                        if let LazyLoadableState::Loaded(preview) =
+                            editor.playlist_preview_items.state_mut()
+                        {
+                            preview.swap(index, index - 1);
+                        }
+                    }
+                    Some(_) => {
+                        debug!(
+                            "Pokus o posunutí položky nahoru, ale již je první v seznamu, ignoruju"
+                        )
+                    }
+                    None => debug!("Pokus o posunutí položky nahoru bez kurzoru, ignoruju"),
+                };
                 Task::none()
             }
-            Message::MoveItemDown(index) => {
-                debug!("Posunuji položku na indexu {index} na {}", index + 1);
-                *editor
-                    .selected_index
-                    .as_mut()
-                    .expect("Při posunování vybrané položka musí být položka vybrána") += 1;
+            Message::MoveItemDown => {
+                match editor.selected_index {
+                    Some(index) if index < editor.playlist.items().len() - 1 => {
+                        debug!("Posunuji položku na indexu {index} na {}", index + 1);
+                        *editor
+                            .selected_index
+                            .as_mut()
+                            .expect("Při posunování vybrané položka musí být položka vybrána") += 1;
+                        editor
+                            .playlist
+                            .swap_items(index, index + 1)
+                            .expect("Nelze posunout položku nahoru");
 
-                editor
-                    .playlist
-                    .swap_items(index, index + 1)
-                    .expect("Nelze posunout položku dolů");
+                        if let LazyLoadableState::Loaded(preview) =
+                            editor.playlist_preview_items.state_mut()
+                        {
+                            preview.swap(index, index + 1);
+                        }
+                    }
+                    Some(_) => debug!(
+                        "Pokus o posunutí položky dolů, ale již je poslední položka, ignoruju"
+                    ),
+                    None => debug!("Pokus o posunutí položky dolů bez kurzoru, ignoruju"),
+                };
                 Task::none()
             }
             Message::DeleteItem(index) => {
@@ -547,6 +594,13 @@ impl PlaylistEditor {
                     .playlist
                     .delete_item(index)
                     .expect("Nelze smazat položku");
+
+                if let LazyLoadableState::Loaded(preview) =
+                    editor.playlist_preview_items.state_mut()
+                {
+                    preview.remove(index);
+                }
+
                 Task::none()
             }
             Message::LoadPreview => {
@@ -574,7 +628,89 @@ impl PlaylistEditor {
                     .finish_loading(preview, task_id);
                 Task::none()
             }
+            Message::MoveSelectionUp => {
+                match editor.selected_index {
+                    Some(index)
+                        if index > 0 && editor.playlist.items().get(index - 1).is_some() =>
+                    {
+                        editor.selected_index = Some(index - 1)
+                    }
+                    Some(_) => trace!("Nelze posunout kurzor nad první položku"),
+                    None if !editor.playlist.items().is_empty() => {
+                        editor.selected_index = Some(editor.playlist.items().len() - 1)
+                    }
+                    None => trace!("Nelze posunout kurzor na prázdném playlistu"),
+                }
+                Task::none()
+            }
+            Message::MoveSelectionDown => {
+                match editor.selected_index {
+                    Some(index) if editor.playlist.items().get(index + 1).is_some() => {
+                        editor.selected_index = Some(index + 1)
+                    }
+                    Some(_) => trace!("Nelze posunout kurzor pod poslední položku"),
+                    None if !editor.playlist.items().is_empty() => editor.selected_index = Some(0),
+                    None => trace!("Nelze posunout kurzor na prázdném playlistu"),
+                }
+                Task::none()
+            }
         }
+    }
+
+    pub fn subscription(&self) -> Subscription<crate::Message> {
+        iced::keyboard::listen().filter_map(|event| {
+            if let Event::KeyPressed { key, modifiers, .. } = event {
+                trace!("Přišel event z klávesnice: {:?}", (key.as_ref(), modifiers));
+                Self::keyboard_shortcuts()
+                    .into_iter()
+                    .find_map(|(key2, modifiers2, msg, _)| {
+                        if key == key2
+                            && (!modifiers.intersection(modifiers2).is_empty()
+                                || modifiers2.is_empty())
+                        {
+                            Some(msg.into())
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Seznam všech klávesových zkratek pro editor. Po jejich přidání sem jsou automaticky zahrnuty v nápovědě a ve zpracování eventů v `Self::subscription()`.
+    ///
+    /// # Pořadí
+    /// Pokud je klávesa použita alespoň 2x a to s modifierem a bez něj, akce s největším
+    /// počtem modifierů se musí vyskytovat první v seznamu.
+    fn keyboard_shortcuts() -> [(Key, Modifiers, Message, &'static str); 4] {
+        [
+            (
+                Key::Named(key::Named::ArrowUp),
+                Modifiers::SHIFT,
+                Message::MoveItemUp,
+                "Posunout položku nahoru",
+            ),
+            (
+                Key::Named(key::Named::ArrowDown),
+                Modifiers::SHIFT,
+                Message::MoveItemDown,
+                "Posunout položku dolů",
+            ),
+            (
+                Key::Named(key::Named::ArrowUp),
+                Modifiers::empty(),
+                Message::MoveSelectionUp,
+                "Posunout kurzor nahoru",
+            ),
+            (
+                Key::Named(key::Named::ArrowDown),
+                Modifiers::empty(),
+                Message::MoveSelectionDown,
+                "Posunout kurzor dolů",
+            ),
+        ]
     }
 }
 
@@ -622,4 +758,24 @@ fn playlist_item_button_style(
             ..Default::default()
         },
     }
+}
+
+fn display_help(key: &Key, mods: &Modifiers, help: &'static str) -> String {
+    let key = match key {
+        Key::Named(key::Named::ArrowDown) => "↓",
+        Key::Named(key::Named::ArrowUp) => "↑",
+        Key::Named(k) => {
+            warn!("Náhled pro neznámou klávesu: {:?}", k);
+            "?"
+        }
+        Key::Character(c) => c.as_str(),
+        Key::Unidentified => "?",
+    };
+
+    let modifiers = mods
+        .iter_names()
+        .map(|(name, _modifier)| String::from("+") + name)
+        .collect::<String>();
+
+    format!("{key} {modifiers} {help}")
 }

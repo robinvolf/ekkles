@@ -100,8 +100,7 @@ impl Ekkles {
         let screen_specific_events = match &self.screen {
             Screen::PickEditor(_) => Subscription::none(),
             Screen::ErrorOccurred(_) => Subscription::none(),
-            Screen::EditPlaylist(_) => Subscription::none(),
-            // Screen::PickSong(_) => Subscription::none(),
+            Screen::EditPlaylist(editor) => editor.subscription(),
             Screen::PickBible(_) => Subscription::none(),
             Screen::Presenter(presenter) => presenter.subscription(),
         };
