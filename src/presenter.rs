@@ -565,7 +565,7 @@ impl Presenter {
                 .chain(Task::done(Message::PresentationWindowClosed.into()))
             }
             Message::PresentationWindowClosed => {
-                state.screen = Screen::PickEditor(StartScreen::new());
+                state.screen = Screen::StartScreen(StartScreen::new());
                 Task::none()
             }
             Message::OpenPresentationWindow => {

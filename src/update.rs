@@ -10,7 +10,7 @@ impl Ekkles {
         trace!("Přišla zpráva: {:?}", msg);
 
         match (msg, &mut self.screen) {
-            (Message::WindowOpened(_), Screen::PickEditor(_)) => Task::none(),
+            (Message::WindowOpened(_), Screen::StartScreen(_)) => Task::none(),
             (Message::WindowClosed(id), _) if id == self.main_window_id => {
                 debug!("Hlavní okno zavřeno, ukončuji aplikaci");
                 iced::exit()
@@ -23,7 +23,7 @@ impl Ekkles {
                 debug!("Zavřeno okno prezentace");
                 Task::done(crate::presenter::Message::PresentationWindowClosed.into())
             }
-            (Message::PlaylistPicker(msg), Screen::PickEditor(_)) => {
+            (Message::PlaylistPicker(msg), Screen::StartScreen(_)) => {
                 start_screen::update(self, msg)
             }
             (Message::PlaylistEditor(msg), Screen::EditPlaylist(_)) => {

@@ -22,7 +22,7 @@ const PROGRAM_NAME: &str = "Ekkles";
 /// Jednotlivé obrazovky aplikace
 enum Screen {
     /// Vybírání playlistu k editaci
-    PickEditor(start_screen::StartScreen),
+    StartScreen(start_screen::StartScreen),
     /// Nastala nezotavitelná chyba
     ErrorOccurred(String),
     /// Editování playlistu
@@ -88,7 +88,7 @@ impl Ekkles {
             Self {
                 main_window_id: id,
                 db,
-                screen: Screen::PickEditor(start_screen::StartScreen::new()),
+                screen: Screen::StartScreen(start_screen::StartScreen::new()),
             },
             open_window_task.map(|id| Message::WindowOpened(id)),
         )
@@ -98,7 +98,7 @@ impl Ekkles {
         let window_closed_events = iced::window::close_events().map(|id| Message::WindowClosed(id));
 
         let screen_specific_events = match &self.screen {
-            Screen::PickEditor(_) => Subscription::none(),
+            Screen::StartScreen(_) => Subscription::none(),
             Screen::ErrorOccurred(_) => Subscription::none(),
             Screen::EditPlaylist(editor) => editor.subscription(),
             Screen::PickBible(_) => Subscription::none(),
@@ -111,7 +111,7 @@ impl Ekkles {
     fn view(&self, window_id: Id) -> Element<Message> {
         if window_id == self.main_window_id {
             match &self.screen {
-                Screen::PickEditor(picker) => picker.view().map(|msg| msg.into()),
+                Screen::StartScreen(picker) => picker.view().map(|msg| msg.into()),
                 Screen::ErrorOccurred(err) => error_screen::view(err),
                 Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
                 // Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),

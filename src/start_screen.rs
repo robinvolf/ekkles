@@ -56,7 +56,7 @@ pub enum Message {
 
 /// Update funkce pro PickPlaylist. Pokud bude zavolána na jiné obrazovce, zpanikaří.
 pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
-    let picker = if let Screen::PickEditor(picker) = &mut state.screen {
+    let picker = if let Screen::StartScreen(picker) = &mut state.screen {
         picker
     } else {
         panic!("Update pro PickPlaylist zavolána na jinou obrazovku");

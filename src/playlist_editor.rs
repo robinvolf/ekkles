@@ -73,7 +73,7 @@ pub enum Message {
     MoveSelectionDown,
     MoveItemUp,
     MoveItemDown,
-    DeleteItem(usize),
+    DeleteItem,
 }
 
 impl From<Message> for crate::Message {
@@ -261,7 +261,7 @@ impl PlaylistEditor {
                         })
                         .width(Length::Fill),
                     button("Smazat položku")
-                        .on_press(Message::DeleteItem(index))
+                        .on_press(Message::DeleteItem)
                         .style(button::danger)
                         .width(Length::Fill),
                 ]
@@ -506,7 +506,7 @@ impl PlaylistEditor {
                 )
             }
             Message::ReturnToPlaylistPicker => {
-                state.screen = Screen::PickEditor(StartScreen::default());
+                state.screen = Screen::StartScreen(StartScreen::default());
                 Task::none()
             }
             Message::SaveAndExit => {
@@ -587,20 +587,23 @@ impl PlaylistEditor {
                 };
                 Task::none()
             }
-            Message::DeleteItem(index) => {
-                debug!("Mažu položku s indexem {index}");
-                editor.selected_index = None;
-                editor
-                    .playlist
-                    .delete_item(index)
-                    .expect("Nelze smazat položku");
+            Message::DeleteItem => {
+                match editor.selected_index {
+                    Some(index) => {
+                        debug!("Mažu položku s indexem {index}");
+                        editor
+                            .playlist
+                            .delete_item(index)
+                            .expect("Nelze smazat položku");
 
-                if let LazyLoadableState::Loaded(preview) =
-                    editor.playlist_preview_items.state_mut()
-                {
-                    preview.remove(index);
+                        if let LazyLoadableState::Loaded(preview) =
+                            editor.playlist_preview_items.state_mut()
+                        {
+                            preview.remove(index);
+                        }
+                    }
+                    None => debug!("Pokus o smazání položky dolů bez kurzoru, ignoruju"),
                 }
-
                 Task::none()
             }
             Message::LoadPreview => {
@@ -684,7 +687,7 @@ impl PlaylistEditor {
     /// # Pořadí
     /// Pokud je klávesa použita alespoň 2x a to s modifierem a bez něj, akce s největším
     /// počtem modifierů se musí vyskytovat první v seznamu.
-    fn keyboard_shortcuts() -> [(Key, Modifiers, Message, &'static str); 4] {
+    fn keyboard_shortcuts() -> [(Key, Modifiers, Message, &'static str); 6] {
         [
             (
                 Key::Named(key::Named::ArrowUp),
@@ -709,6 +712,18 @@ impl PlaylistEditor {
                 Modifiers::empty(),
                 Message::MoveSelectionDown,
                 "Posunout kurzor dolů",
+            ),
+            (
+                Key::Character("d".into()),
+                Modifiers::empty(),
+                Message::DeleteItem,
+                "Smazat položku",
+            ),
+            (
+                Key::Named(key::Named::Escape),
+                Modifiers::empty(),
+                Message::ReturnToPlaylistPicker,
+                "Zpět na výběr playlistů",
             ),
         ]
     }
@@ -764,6 +779,7 @@ fn display_help(key: &Key, mods: &Modifiers, help: &'static str) -> String {
     let key = match key {
         Key::Named(key::Named::ArrowDown) => "↓",
         Key::Named(key::Named::ArrowUp) => "↑",
+        Key::Named(key::Named::Escape) => "ESC",
         Key::Named(k) => {
             warn!("Náhled pro neznámou klávesu: {:?}", k);
             "?"
