@@ -1,4 +1,26 @@
-use std::sync::Arc;
+//! # Fičurky editoru
+//!
+//! ## Kurzor
+//! - Téměř vždy (vyjma prázdného playlistu) existuje kurzor - aktuálně vybraná položka playlistu
+//! - Poloha kurzoru se mění:
+//!   - Kliknutím na položku
+//!   - Klávesových zkratek (TODO)
+//!
+//! ## Posunování položek
+//! - Položka pod kurzorem je posunovatelná pomocí:
+//!   - Tlačítek v pravém panelu nahoru/dolů
+//!   - Klávesových zkratek (TODO)
+//!
+//! ## Mazání položek
+//! - Stejně jako posouvání tlačítko/klávesová zkratka (TODO)
+//! - Kurzor bude po smazání položky nastaven na:
+//!   + Pokud ještě zbývají nějaké _následující_ položky, kurzor se nastaví na následující položku
+//!   + Pokud ještě zbývají nějaké _předchozí_ položky, kurzor se nastaví na předchozí položku
+//!   + Pokud je po smazání položky playlist prázdný, kurzor zmizí
+//!
+//! ## Přidávání položek
+//! - Položky se přidávají pomocí tlačítek (nová pasáž/nová píseň) nebo klávesových zkratek (TODO)
+//! - Položka se vždy přidá _za_ položku označenou kurzorem
 
 use anyhow::{Context, Result};
 use ekkles_data::{
@@ -7,14 +29,14 @@ use ekkles_data::{
     playlist::{self, PlaylistItem, PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
-    Element, Length, Task,
+    Background, Color, Element, Length, Task, Theme,
     alignment::{Horizontal, Vertical},
+    color,
     futures::{FutureExt, future::try_join_all},
-    widget::{button, column, container, row, table, text, text_input},
+    widget::{button, column, container, row, scrollable, table, text, text_input},
 };
 use log::{debug, trace};
 use sqlx::{Sqlite, pool::PoolConnection};
-use tokio::sync::Mutex;
 
 use crate::{
     Ekkles, Screen,
@@ -90,11 +112,11 @@ impl PlaylistEditor {
     pub fn view(&self) -> Element<Message> {
         let playlist_name = self.playlist.name();
 
-        let playlist_item_content_function = |(index, item): (usize, &PlaylistItemMetadata)| {
-            let msg = if self
+        let playlist_item_content_column = |(index, item): (usize, &PlaylistItemMetadata)| {
+            let is_selected = self
                 .selected_index
-                .is_some_and(|selected| selected == index)
-            {
+                .is_some_and(|selected| selected == index);
+            let msg = if is_selected {
                 None
             } else {
                 Some(Message::SelectItem(index))
@@ -111,47 +133,110 @@ impl PlaylistEditor {
                     let preview_item = &preview_items[index];
                     let passage = preview_item.as_bible_passage().unwrap();
                     let indices = VerseIndices::from(passage.get_range());
-                    text!("{} {}", passage.get_translation_name(), indices).into()
+                    text!("{} ({})", indices, passage.get_translation_name())
+                        .wrapping(text::Wrapping::None)
+                        .into()
                 }
                 (PlaylistItemMetadata::Song(_), LazyLoadableState::Loaded(preview_items)) => {
                     let preview_item = &preview_items[index];
                     let song = preview_item.as_song().unwrap();
-                    text!("Píseň {}", song.title).into()
+                    text(&song.title).wrapping(text::Wrapping::None).into()
                 }
             };
 
             button(content)
-                .style(match item {
-                    PlaylistItemMetadata::BiblePassage { .. } if msg.is_none() => {
-                        playlist_item_styles::passage_selected
-                    }
-                    PlaylistItemMetadata::BiblePassage { .. } if msg.is_some() => {
-                        playlist_item_styles::passage
-                    }
-                    PlaylistItemMetadata::Song(_) if msg.is_none() => {
-                        playlist_item_styles::song_selected
-                    }
-                    PlaylistItemMetadata::Song(_) if msg.is_some() => playlist_item_styles::song,
-                    _ => unreachable!(),
-                })
+                .style(playlist_item_button_style(item, is_selected))
                 .on_press_maybe(msg)
+                .width(Length::Fill)
+                .clip(true)
+        };
+
+        let playlist_item_kind_column = |(index, &item)| {
+            let is_selected = self
+                .selected_index
+                .is_some_and(|selected| selected == index);
+            let msg = if is_selected {
+                None
+            } else {
+                Some(Message::SelectItem(index))
+            };
+
+            let text = match item {
+                PlaylistItemMetadata::BiblePassage { .. } => "Pasáž",
+                PlaylistItemMetadata::Song(_) => "Píseň",
+            };
+
+            button(text)
+                .on_press_maybe(msg)
+                .style(playlist_item_button_style(&item, is_selected))
+                .height(Length::Shrink)
                 .width(Length::Fill)
         };
 
-        let playlist_items = table(
-            [
-                table::column("Druh", |(_, &item)| match item {
-                    PlaylistItemMetadata::BiblePassage { .. } => button("Pasáž"),
-                    PlaylistItemMetadata::Song(_) => button("Píseň"),
-                })
-                .width(Length::Shrink),
-                table::column("Název", playlist_item_content_function)
-                    .width(Length::FillPortion(1)),
-            ],
-            self.playlist.items().iter().enumerate(),
-        )
-        .separator(1)
-        .padding(0);
+        let playlist_item_preview_column = |(index, &item)| {
+            let is_selected = self
+                .selected_index
+                .is_some_and(|selected| selected == index);
+
+            let msg = if is_selected {
+                None
+            } else {
+                Some(Message::SelectItem(index))
+            };
+
+            let content: Element<Message> = match self.playlist_preview_items.state() {
+                LazyLoadableState::Cold | LazyLoadableState::Loading { .. } => {
+                    self.playlist_preview_items.view_not_loaded().into()
+                }
+                LazyLoadableState::Loaded(preview) => {
+                    let preview_item = &preview[index];
+                    const MAX_PREVIEW_VERSES: usize = 3;
+                    let content = match preview_item {
+                        PlaylistItem::BiblePassage(passage) => passage
+                            .get_verses()
+                            .iter()
+                            .take(MAX_PREVIEW_VERSES)
+                            .map(|(num, text)| format!("{num}: {text} "))
+                            .chain(["...".into()])
+                            .collect::<String>(),
+
+                        PlaylistItem::Song(song) => song
+                            .order
+                            .iter()
+                            .map(|key| {
+                                let removed_newlines = song.parts[key].replace('\n', " ");
+                                format!("{}: {} ", key, removed_newlines)
+                            })
+                            .chain(["...".into()])
+                            .collect(),
+                    };
+
+                    text(content).wrapping(text::Wrapping::None).into()
+                }
+            };
+
+            button(content)
+                .clip(true)
+                .on_press_maybe(msg)
+                .style(playlist_item_button_style(&item, is_selected))
+                .height(Length::Shrink)
+                .width(Length::Fill)
+        };
+
+        let playlist_items = scrollable(
+            table(
+                [
+                    table::column("Druh", playlist_item_kind_column).width(Length::Fixed(70.0)), // Obsah tohoto sloupce je "Píseň"/"Pasáž", tudíž nastavíme absolutní šířku
+                    table::column("Název", playlist_item_content_column)
+                        .width(Length::FillPortion(1)),
+                    table::column("Náhled", playlist_item_preview_column)
+                        .width(Length::FillPortion(2)),
+                ],
+                self.playlist.items().iter().enumerate(),
+            )
+            .separator(1)
+            .padding(0),
+        );
 
         let item_manipulation = match self.selected_index {
             Some(index) => {
@@ -228,7 +313,7 @@ impl PlaylistEditor {
                 ]
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Center),
-                playlist_items.width(Length::FillPortion(2)),
+                playlist_items.width(Length::FillPortion(3)),
                 if self.selected_index.is_some() {
                     item_manipulation
                 } else {
@@ -468,7 +553,6 @@ impl PlaylistEditor {
                 let conn = state.db.acquire();
                 let items = editor.playlist.items().to_vec();
                 let (task, handle) = Task::abortable(Task::future(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
                     let items = items.iter();
                     PlaylistItem::load_list(items, &mut conn).await
@@ -491,5 +575,51 @@ impl PlaylistEditor {
                 Task::none()
             }
         }
+    }
+}
+
+fn playlist_item_button_style(
+    item: &PlaylistItemMetadata,
+    selected: bool,
+) -> fn(&Theme, button::Status) -> button::Style {
+    const SONG: Color = color!(0x7bccf6);
+    const PASSAGE: Color = color!(0xfec57f);
+    const SELECTED_SCALER: f32 = 0.7;
+    const SONG_SELECTED: Color = {
+        let mut c = SONG;
+        c.r *= SELECTED_SCALER;
+        c.g *= SELECTED_SCALER;
+        c.b *= SELECTED_SCALER;
+        c
+    };
+    const PASSAGE_SELECTED: Color = {
+        let mut c = PASSAGE;
+        c.r *= SELECTED_SCALER;
+        c.g *= SELECTED_SCALER;
+        c.b *= SELECTED_SCALER;
+        c
+    };
+
+    match (item, selected) {
+        (PlaylistItemMetadata::BiblePassage { .. }, true) => {
+            |_theme: &Theme, _status| button::Style {
+                background: Some(Background::Color(PASSAGE_SELECTED)),
+                ..Default::default()
+            }
+        }
+        (PlaylistItemMetadata::BiblePassage { .. }, false) => {
+            |_theme: &Theme, _status| button::Style {
+                background: Some(Background::Color(PASSAGE)),
+                ..Default::default()
+            }
+        }
+        (PlaylistItemMetadata::Song(_), true) => |_theme: &Theme, _status| button::Style {
+            background: Some(Background::Color(SONG_SELECTED)),
+            ..Default::default()
+        },
+        (PlaylistItemMetadata::Song(_), false) => |_theme: &Theme, _status| button::Style {
+            background: Some(Background::Color(SONG)),
+            ..Default::default()
+        },
     }
 }

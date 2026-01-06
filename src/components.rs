@@ -68,14 +68,15 @@ where
     }
 
     pub fn view_not_loaded(&self) -> Container<M> {
+        let text = text("Načítám obsah z databáze").wrapping(text::Wrapping::None);
+
         match &self.state {
-            LazyLoadableState::Cold => container(
-                sensor(text("Načítám obsah z databáze"))
-                    .on_show(|_| self.msg_start_loading.clone()),
-            )
-            .center(Length::Shrink)
-            .style(container::secondary),
-            LazyLoadableState::Loading { .. } => container(text("Načítám obsah z databáze"))
+            LazyLoadableState::Cold => {
+                container(sensor(text).on_show(|_| self.msg_start_loading.clone()))
+                    .center(Length::Shrink)
+                    .style(container::secondary)
+            }
+            LazyLoadableState::Loading { .. } => container(text)
                 .center(Length::Shrink)
                 .style(container::secondary),
             LazyLoadableState::Loaded(_) => panic!(
