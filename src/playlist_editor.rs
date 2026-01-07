@@ -4,15 +4,15 @@
 //! - Téměř vždy (vyjma prázdného playlistu) existuje kurzor - aktuálně vybraná položka playlistu
 //! - Poloha kurzoru se mění:
 //!   - Kliknutím na položku
-//!   - Klávesových zkratek (TODO)
+//!   - Klávesových zkratek
 //!
 //! ## Posunování položek
 //! - Položka pod kurzorem je posunovatelná pomocí:
 //!   - Tlačítek v pravém panelu nahoru/dolů
-//!   - Klávesových zkratek (TODO)
+//!   - Klávesových zkratek
 //!
 //! ## Mazání položek
-//! - Stejně jako posouvání tlačítko/klávesová zkratka (TODO)
+//! - Stejně jako posouvání tlačítko/klávesová zkratka
 //! - Kurzor bude po smazání položky nastaven na:
 //!   + Pokud ještě zbývají nějaké _následující_ položky, kurzor se nastaví na následující položku
 //!   + Pokud ještě zbývají nějaké _předchozí_ položky, kurzor se nastaví na předchozí položku
@@ -24,25 +24,28 @@
 
 use anyhow::{Context, Result};
 use ekkles_data::{
-    Song,
-    bible::indexing::{Passage, VerseIndices},
+    bible::indexing::VerseIndices,
     playlist::{self, PlaylistItem, PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
     Background, Color, Element, Length, Subscription, Task, Theme,
     alignment::{Horizontal, Vertical},
     color,
-    futures::{FutureExt, future::try_join_all},
     keyboard::{Event, Key, Modifiers, key},
-    widget::{button, column, container, row, scrollable, table, text, text_input},
+    widget::{
+        Container, Scrollable, button, column, container, row, scrollable, space, table, text,
+        text_input,
+    },
 };
-use log::{debug, error, trace, warn};
+use log::{debug, trace, warn};
 use sqlx::{Sqlite, pool::PoolConnection};
 
 use crate::{
     Ekkles, Screen,
-    bible_picker::BiblePicker,
-    components::{LazyLoadable, LazyLoadableState, playlist_item_styles},
+    components::{
+        LazyLoadable, LazyLoadableState,
+        song_picker::{self, SongPicker},
+    },
     presenter::Presenter,
     start_screen::StartScreen,
 };
@@ -67,18 +70,42 @@ pub enum Message {
     LoadPresentation,
     StartPresentation(Presenter),
     AddBiblePassage,
-    AddSong,
+    OpenSongPicker,
     SelectItem(usize),
     MoveSelectionUp,
     MoveSelectionDown,
     MoveItemUp,
     MoveItemDown,
     DeleteItem,
+    SongPicker(song_picker::Message),
 }
 
 impl From<Message> for crate::Message {
     fn from(value: Message) -> Self {
         crate::Message::PlaylistEditor(value)
+    }
+}
+
+impl From<song_picker::Message> for Message {
+    fn from(value: song_picker::Message) -> Self {
+        Message::SongPicker(value)
+    }
+}
+
+#[derive(Debug)]
+enum OpenedPicker {
+    Song(song_picker::SongPicker),
+    Passage,
+    None,
+}
+
+impl OpenedPicker {
+    fn as_song_mut(&mut self) -> Option<&mut song_picker::SongPicker> {
+        if let Self::Song(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 }
 
@@ -94,6 +121,8 @@ pub struct PlaylistEditor {
     new_playlist_err_msg: String,
     /// Index právě vybrané položky. `Option`, protože je možné mít prázdný playlist.
     selected_index: Option<usize>,
+    /// Aktuální výběr, překresluje aktuální okno
+    picker: OpenedPicker,
 }
 
 impl PlaylistEditor {
@@ -104,6 +133,7 @@ impl PlaylistEditor {
             new_playlist_name: String::new(),
             new_playlist_err_msg: String::new(),
             selected_index: None,
+            picker: OpenedPicker::None,
         }
     }
 
@@ -113,133 +143,17 @@ impl PlaylistEditor {
     }
 
     pub fn view(&self) -> Element<Message> {
+        match &self.picker {
+            OpenedPicker::Song(song_picker) => Self::view_song_picker(song_picker),
+            OpenedPicker::Passage => todo!(),
+            OpenedPicker::None => self.view_editor(),
+        }
+    }
+
+    pub fn view_editor(&self) -> Element<Message> {
         let playlist_name = self.playlist.name();
 
-        let playlist_item_content_column = |(index, item): (usize, &PlaylistItemMetadata)| {
-            let is_selected = self
-                .selected_index
-                .is_some_and(|selected| selected == index);
-            let msg = if is_selected {
-                None
-            } else {
-                Some(Message::SelectItem(index))
-            };
-
-            let content: Element<Message> = match (item, self.playlist_preview_items.state()) {
-                (_, LazyLoadableState::Cold | LazyLoadableState::Loading { .. }) => {
-                    self.playlist_preview_items.view_not_loaded().into()
-                }
-                (
-                    PlaylistItemMetadata::BiblePassage { .. },
-                    LazyLoadableState::Loaded(preview_items),
-                ) => {
-                    let preview_item = &preview_items[index];
-                    let passage = preview_item.as_bible_passage().unwrap();
-                    let indices = VerseIndices::from(passage.get_range());
-                    text!("{} ({})", indices, passage.get_translation_name())
-                        .wrapping(text::Wrapping::None)
-                        .into()
-                }
-                (PlaylistItemMetadata::Song(_), LazyLoadableState::Loaded(preview_items)) => {
-                    let preview_item = &preview_items[index];
-                    let song = preview_item.as_song().unwrap();
-                    text(&song.title).wrapping(text::Wrapping::None).into()
-                }
-            };
-
-            button(content)
-                .style(playlist_item_button_style(item, is_selected))
-                .on_press_maybe(msg)
-                .width(Length::Fill)
-                .clip(true)
-        };
-
-        let playlist_item_kind_column = |(index, &item)| {
-            let is_selected = self
-                .selected_index
-                .is_some_and(|selected| selected == index);
-            let msg = if is_selected {
-                None
-            } else {
-                Some(Message::SelectItem(index))
-            };
-
-            let text = match item {
-                PlaylistItemMetadata::BiblePassage { .. } => "Pasáž",
-                PlaylistItemMetadata::Song(_) => "Píseň",
-            };
-
-            button(text)
-                .on_press_maybe(msg)
-                .style(playlist_item_button_style(&item, is_selected))
-                .height(Length::Shrink)
-                .width(Length::Fill)
-        };
-
-        let playlist_item_preview_column = |(index, &item)| {
-            let is_selected = self
-                .selected_index
-                .is_some_and(|selected| selected == index);
-
-            let msg = if is_selected {
-                None
-            } else {
-                Some(Message::SelectItem(index))
-            };
-
-            let content: Element<Message> = match self.playlist_preview_items.state() {
-                LazyLoadableState::Cold | LazyLoadableState::Loading { .. } => {
-                    self.playlist_preview_items.view_not_loaded().into()
-                }
-                LazyLoadableState::Loaded(preview) => {
-                    let preview_item = &preview[index];
-                    const MAX_PREVIEW_VERSES: usize = 3;
-                    let content = match preview_item {
-                        PlaylistItem::BiblePassage(passage) => passage
-                            .get_verses()
-                            .iter()
-                            .take(MAX_PREVIEW_VERSES)
-                            .map(|(num, text)| format!("{num}: {text} "))
-                            .chain(["...".into()])
-                            .collect::<String>(),
-
-                        PlaylistItem::Song(song) => song
-                            .order
-                            .iter()
-                            .map(|key| {
-                                let removed_newlines = song.parts[key].replace('\n', " ");
-                                format!("{}: {} ", key, removed_newlines)
-                            })
-                            .chain(["...".into()])
-                            .collect(),
-                    };
-
-                    text(content).wrapping(text::Wrapping::None).into()
-                }
-            };
-
-            button(content)
-                .clip(true)
-                .on_press_maybe(msg)
-                .style(playlist_item_button_style(&item, is_selected))
-                .height(Length::Shrink)
-                .width(Length::Fill)
-        };
-
-        let playlist_items = scrollable(
-            table(
-                [
-                    table::column("Druh", playlist_item_kind_column).width(Length::Fixed(70.0)), // Obsah tohoto sloupce je "Píseň"/"Pasáž", tudíž nastavíme absolutní šířku
-                    table::column("Název", playlist_item_content_column)
-                        .width(Length::FillPortion(1)),
-                    table::column("Náhled", playlist_item_preview_column)
-                        .width(Length::FillPortion(2)),
-                ],
-                self.playlist.items().iter().enumerate(),
-            )
-            .separator(1)
-            .padding(0),
-        );
+        let playlist_items = container(playlist_table(self));
 
         let item_manipulation = match self.selected_index {
             Some(index) => {
@@ -314,7 +228,7 @@ impl PlaylistEditor {
                             .on_press(Message::DeletePlaylist)
                             .width(Length::Fill),
                         button("Přidat píseň")
-                            .on_press(Message::AddSong)
+                            .on_press(Message::OpenSongPicker)
                             .width(Length::Fill),
                         button("Přidat verše")
                             .on_press(Message::AddBiblePassage)
@@ -340,6 +254,20 @@ impl PlaylistEditor {
                 .align_x(Horizontal::Center),
                 playlist_items.width(Length::FillPortion(3)),
                 right_column.width(Length::FillPortion(1)),
+            ])
+            .padding(10)
+            .center_x(Length::FillPortion(1))
+        ])
+    }
+
+    pub fn view_song_picker(picker: &SongPicker) -> Element<Message> {
+        Into::<Element<Message>>::into(column![
+            container(row![
+                space().width(Length::FillPortion(1)),
+                container(picker.view().map(|msg| Message::SongPicker(msg)))
+                    .width(Length::FillPortion(3))
+                    .max_width(1000),
+                space().width(Length::FillPortion(1)),
             ])
             .padding(10)
             .center_x(Length::FillPortion(1))
@@ -429,14 +357,10 @@ impl PlaylistEditor {
                 // ))
                 todo!()
             }
-            Message::AddSong => {
+            Message::OpenSongPicker => {
                 debug!("Přecházím na výběr písně");
-                // let playlist = editor.playlist.blocking_lock().clone();
-                todo!();
-                // state.screen = Screen::PickSong(SongPicker::new(playlist));
-                // Task::done(crate::Message::SongPicker(
-                //     crate::song_picker::Message::LoadSongs,
-                // ))
+                editor.picker = OpenedPicker::Song(SongPicker::new());
+                Task::none()
             }
             Message::PlaylistSavedSuccessfully => {
                 debug!("Playlist byl úspéšně uložen");
@@ -657,6 +581,41 @@ impl PlaylistEditor {
                 }
                 Task::none()
             }
+            Message::SongPicker(message) => {
+                let picker = editor
+                    .picker
+                    .as_song_mut()
+                    .expect("Zpráva pro song_picker přišla, když song_picker nebyl vybrán");
+                match message {
+                    song_picker::Message::Return => {
+                        editor.picker = OpenedPicker::None;
+                        Task::none()
+                    }
+                    song_picker::Message::ReturnSelected(picker_item) => {
+                        debug!("Přidávám píseň {:?}", &picker_item);
+
+                        // Přidání vybrané písně do playlistu
+                        match editor.selected_index {
+                            Some(index) => editor.playlist.add_song(picker_item.id, index),
+                            None => editor.playlist.push_song(picker_item.id),
+                        }
+
+                        // Musíme znovu načíst cache pro náhled
+                        editor.playlist_preview_items.invalidate();
+
+                        // Zavřeme výběr písně
+                        editor.picker = OpenedPicker::None;
+
+                        Task::none()
+                    }
+                    song_picker::Message::FatalError(e) => {
+                        Task::done(crate::Message::FatalErrorOccured(e))
+                    }
+                    msg => picker
+                        .update(&state.db, msg)
+                        .map(|msg| Message::SongPicker(msg).into()),
+                }
+            }
         }
     }
 
@@ -794,4 +753,131 @@ fn display_help(key: &Key, mods: &Modifiers, help: &'static str) -> String {
         .collect::<String>();
 
     format!("{key} {modifiers} {help}")
+}
+
+fn playlist_table(editor: &PlaylistEditor) -> Element<Message> {
+    let playlist_item_content_column = |(index, item): (usize, &PlaylistItemMetadata)| {
+        let is_selected = editor
+            .selected_index
+            .is_some_and(|selected| selected == index);
+        let msg = if is_selected {
+            None
+        } else {
+            Some(Message::SelectItem(index))
+        };
+
+        let content: Element<Message> = match (item, editor.playlist_preview_items.state()) {
+            (_, LazyLoadableState::Cold | LazyLoadableState::Loading { .. }) => {
+                editor.playlist_preview_items.view_not_loaded().into()
+            }
+            (
+                PlaylistItemMetadata::BiblePassage { .. },
+                LazyLoadableState::Loaded(preview_items),
+            ) => {
+                let preview_item = &preview_items[index];
+                let passage = preview_item.as_bible_passage().unwrap();
+                let indices = VerseIndices::from(passage.get_range());
+                text!("{} ({})", indices, passage.get_translation_name())
+                    .wrapping(text::Wrapping::None)
+                    .into()
+            }
+            (PlaylistItemMetadata::Song(_), LazyLoadableState::Loaded(preview_items)) => {
+                let preview_item = &preview_items[index];
+                let song = preview_item.as_song().unwrap();
+                text(&song.title).wrapping(text::Wrapping::None).into()
+            }
+        };
+
+        button(content)
+            .style(playlist_item_button_style(item, is_selected))
+            .on_press_maybe(msg)
+            .width(Length::Fill)
+            .clip(true)
+    };
+
+    let playlist_item_kind_column = |(index, &item)| {
+        let is_selected = editor
+            .selected_index
+            .is_some_and(|selected| selected == index);
+        let msg = if is_selected {
+            None
+        } else {
+            Some(Message::SelectItem(index))
+        };
+
+        let text = match item {
+            PlaylistItemMetadata::BiblePassage { .. } => "Pasáž",
+            PlaylistItemMetadata::Song(_) => "Píseň",
+        };
+
+        button(text)
+            .on_press_maybe(msg)
+            .style(playlist_item_button_style(&item, is_selected))
+            .height(Length::Shrink)
+            .width(Length::Fill)
+    };
+
+    let playlist_item_preview_column = |(index, &item)| {
+        let is_selected = editor
+            .selected_index
+            .is_some_and(|selected| selected == index);
+
+        let msg = if is_selected {
+            None
+        } else {
+            Some(Message::SelectItem(index))
+        };
+
+        let content: Element<Message> = match editor.playlist_preview_items.state() {
+            LazyLoadableState::Cold | LazyLoadableState::Loading { .. } => {
+                editor.playlist_preview_items.view_not_loaded().into()
+            }
+            LazyLoadableState::Loaded(preview) => {
+                let preview_item = &preview[index];
+                const MAX_PREVIEW_VERSES: usize = 3;
+                let content = match preview_item {
+                    PlaylistItem::BiblePassage(passage) => passage
+                        .get_verses()
+                        .iter()
+                        .take(MAX_PREVIEW_VERSES)
+                        .map(|(num, text)| format!("{num}: {text} "))
+                        .chain(["...".into()])
+                        .collect::<String>(),
+
+                    PlaylistItem::Song(song) => song
+                        .order
+                        .iter()
+                        .map(|key| {
+                            let removed_newlines = song.parts[key].replace('\n', " ");
+                            format!("{}: {} ", key, removed_newlines)
+                        })
+                        .chain(["...".into()])
+                        .collect(),
+                };
+
+                text(content).wrapping(text::Wrapping::None).into()
+            }
+        };
+
+        button(content)
+            .clip(true)
+            .on_press_maybe(msg)
+            .style(playlist_item_button_style(&item, is_selected))
+            .height(Length::Shrink)
+            .width(Length::Fill)
+    };
+
+    container(scrollable(
+        table(
+            [
+                table::column("Druh", playlist_item_kind_column).width(Length::Fixed(70.0)), // Obsah tohoto sloupce je "Píseň"/"Pasáž", tudíž nastavíme absolutní šířku
+                table::column("Název", playlist_item_content_column).width(Length::FillPortion(1)),
+                table::column("Náhled", playlist_item_preview_column).width(Length::FillPortion(2)),
+            ],
+            editor.playlist.items().iter().enumerate(),
+        )
+        .separator(1)
+        .padding(0),
+    ))
+    .into()
 }

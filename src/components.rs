@@ -71,6 +71,10 @@ where
         &mut self.state
     }
 
+    pub fn invalidate(&mut self) {
+        self.state = LazyLoadableState::Cold;
+    }
+
     pub fn view_not_loaded(&self) -> Container<M> {
         let text = text("Načítám obsah z databáze").wrapping(text::Wrapping::None);
 
