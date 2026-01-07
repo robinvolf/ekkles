@@ -506,18 +506,6 @@ impl PlaylistMetadata {
 
         Ok(())
     }
-
-    /// Pro testování neměla by se použít v normálním kódu
-    pub fn mock_new(name: &str) -> Self {
-        let created = Utc::now().trunc_subsecs(0);
-
-        Self {
-            id: 0,
-            name: name.into(),
-            created,
-            items: Vec::new(),
-        }
-    }
 }
 
 /// Playlist se skládá z vícero druhů položek, tento enum je rozlišuje.

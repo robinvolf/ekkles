@@ -1,4 +1,7 @@
-use std::{fmt::Display, sync::LazyLock};
+use std::{
+    fmt::Display,
+    sync::{LazyLock, Mutex, OnceLock},
+};
 
 use anyhow::{Result, anyhow, bail};
 use ekkles_data::{
@@ -6,24 +9,30 @@ use ekkles_data::{
         get_available_translations,
         indexing::{Book, Passage, VerseIndex, chapters_in_book, verses_in_chapter},
     },
-    playlist::PlaylistMetadata,
+    playlist::{PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
     Alignment, Element, Length, Padding, Task,
     widget::{
-        self, button, column, container, pick_list, row, scrollable, space, text, text_input,
+        self, button, column, container, operation::focus, pick_list, row, scrollable, space, text,
+        text_input,
     },
 };
 use log::{debug, trace};
 use regex::Regex;
+use sqlx::{Pool, Sqlite};
 
-use crate::{Ekkles, Screen, playlist_editor::PlaylistEditor};
+use crate::{
+    Ekkles, Screen,
+    components::{LazyLoadable, LazyLoadableState, PickerItem},
+    playlist_editor::PlaylistEditor,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     LoadTranslations,
-    TranslationsLoaded(Vec<TranslationPickerItem>),
-    TranslationPicked(TranslationPickerItem),
+    TranslationsLoaded(Vec<PickerItem>, u32),
+    TranslationPicked(PickerItem),
     QuickPickerContentChanged(String),
     FromBookPicked(Book),
     FromChapterPicked(u8),
@@ -32,26 +41,21 @@ pub enum Message {
     ToChapterPicked(u8),
     ToVersePicked(u8),
     SelectionChanged,
-    SetPreview(Passage),
+    PreviewLoaded(Passage, u32),
     ClearPreview,
     PickPassage,
-    ReturnToEditor,
-}
-
-impl From<Message> for crate::Message {
-    fn from(value: Message) -> Self {
-        crate::Message::BiblePicker(value)
-    }
+    Return,
+    ReturnSelected(i64, VerseIndex, VerseIndex),
+    FatalError(String),
 }
 
 #[derive(Debug)]
 pub struct BiblePicker {
-    playlist: PlaylistMetadata,
-    translations: Option<Vec<TranslationPickerItem>>,
+    translations: LazyLoadable<Vec<PickerItem>, Message>,
     quick_picker_content: String,
-    picked_translation: Option<TranslationPickerItem>,
+    picked_translation: Option<PickerItem>,
     indexes: BiblePickerIndexes,
-    preview: Option<Passage>,
+    preview: Option<LazyLoadable<Passage, Message>>,
     err_msg: String,
 }
 
@@ -67,11 +71,17 @@ impl Display for TranslationPickerItem {
     }
 }
 
+/// Statická proměnná, protože je to nejjednodušší způsob, jak si perzistentně
+/// pamatovat vybraný překlad mezi jednotlivými otevřeními této komponenty
+static LAST_PICKED_TRANSLATION: OnceLock<Mutex<PickerItem>> = OnceLock::new();
+const MUTEX_LOCK_MSG: &str = "Tento zámek by měl být držen pouze námi na předem určených místech, nikdy by tedy neměl být zamčený při přístupu";
+
+const QUICK_SELECT_ID: &str = "bible_picker_quick_select";
+
 impl BiblePicker {
-    pub fn new(playlist: PlaylistMetadata) -> Self {
+    pub fn new() -> Self {
         Self {
-            playlist,
-            translations: None,
+            translations: LazyLoadable::new(Message::LoadTranslations),
             quick_picker_content: String::new(),
             picked_translation: None,
             indexes: BiblePickerIndexes::new(),
@@ -81,24 +91,32 @@ impl BiblePicker {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let quick_picker = row![
-            pick_list(
-                // TODO: Opravdu je tu nutné klonovat?
-                self.translations.clone().unwrap_or(vec![]),
-                self.picked_translation.clone(),
-                Message::TranslationPicked,
-            )
-            .placeholder(if self.translations.is_some() {
-                "Vyber překlad"
-            } else {
-                "Načítám překlady..."
-            })
-            .width(Length::FillPortion(1)),
-            text_input("Např. Jan 3:4 - 4:5", &self.quick_picker_content)
-                .on_input(Message::QuickPickerContentChanged)
-                .on_submit(Message::PickPassage)
-                .width(Length::FillPortion(3))
-        ];
+        let quick_picker = match self.translations.state().as_loaded() {
+            Some(translations) => {
+                let selected = self.picked_translation.clone().or_else(|| {
+                    trace!("Získávám vybraný překlad z perzistantního překladu");
+                    LAST_PICKED_TRANSLATION
+                        .get()
+                        .map(|m| m.try_lock().expect(MUTEX_LOCK_MSG).clone())
+                });
+
+                container(row![
+                    pick_list(
+                        translations.as_slice(),
+                        selected,
+                        Message::TranslationPicked,
+                    )
+                    .placeholder("Vyber překlad")
+                    .width(Length::FillPortion(1)),
+                    text_input("Např. Jan 3:4 - 4:5", &self.quick_picker_content)
+                        .on_input(Message::QuickPickerContentChanged)
+                        .on_submit(Message::PickPassage)
+                        .id(QUICK_SELECT_ID)
+                        .width(Length::FillPortion(3))
+                ])
+            }
+            None => self.translations.view_not_loaded(),
+        };
 
         let detailed_picker = row![
             pick_list(
@@ -187,7 +205,7 @@ impl BiblePicker {
             .width(Length::FillPortion(1)),
         ];
 
-        let passage_preview = match &self.preview {
+        let passage_preview = match &self.preview.as_ref().and_then(|p| p.state().as_loaded()) {
             Some(passage) => {
                 let preview_text = passage
                     .get_verses()
@@ -214,193 +232,205 @@ impl BiblePicker {
         ]
         .spacing(10);
 
-        Into::<Element<Message>>::into(container(
-            row![
-                container(
-                    button("Zpět")
-                        .on_press(Message::ReturnToEditor)
-                        .width(Length::Fill)
-                )
-                .align_bottom(Length::Fill)
-                .width(Length::FillPortion(1))
-                .padding(30),
+        Into::<Element<Message>>::into(
+            container(
                 column![
                     quick_picker,
                     detailed_picker,
                     passage_preview.height(200),
-                    submit_button
+                    row![
+                        submit_button,
+                        button("Zpět").on_press(Message::Return).width(Length::Fill)
+                    ]
+                    .spacing(10)
+                    .width(Length::Fill)
                 ]
                 .spacing(100)
                 .align_x(Alignment::Center)
-                .width(Length::FillPortion(2)),
-                container("").width(Length::FillPortion(1))
-            ]
-            .padding(10)
+                .width(Length::Fill),
+            )
             .height(Length::Fill)
             .align_y(Alignment::Center),
-        ))
+        )
     }
 
-    pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
-        let picker = match &mut state.screen {
-            Screen::PickBible(picker) => picker,
-            screen => panic!(
-                "Update pro BiblePicker zavolán nad jinou obrazovkou {:?}",
-                screen
-            ),
-        };
-
+    pub fn update(&mut self, db: &Pool<Sqlite>, msg: Message) -> Task<Message> {
         match msg {
             Message::LoadTranslations => {
                 debug!("Načítám seznam překladů");
-                let conn = state.db.acquire();
-                Task::perform(
-                    async {
-                        let mut conn = conn.await?;
-                        get_available_translations(&mut conn).await
-                    },
-                    |res| match res {
+                let conn = db.acquire();
+                let (task, handle) = Task::abortable(Task::future(async {
+                    let mut conn = conn.await?;
+                    get_available_translations(&mut conn).await
+                }));
+
+                match self.translations.start_loading(handle) {
+                    Some(task_id) => Task::map(task, move |res| match res {
                         Ok(translations) => {
                             let items = translations
                                 .into_iter()
-                                .map(|(id, name)| TranslationPickerItem { id, name })
+                                .map(|(id, name)| PickerItem { id, name })
                                 .collect();
-                            Message::TranslationsLoaded(items).into()
+                            Message::TranslationsLoaded(items, task_id)
                         }
-                        Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                    },
-                )
+                        Err(e) => Message::FatalError(format!("{:?}", e)),
+                    }),
+                    None => Task::none(),
+                }
             }
-            Message::TranslationsLoaded(translations) => {
+            Message::TranslationsLoaded(translations, task_id) => {
                 debug!("Překlady načteny {:#?}", translations);
-                picker.picked_translation = translations.first().cloned();
-                picker.translations = Some(translations);
-                Task::none()
+
+                if let Some(tr) = translations.first().cloned() {
+                    self.picked_translation = Some(
+                        LAST_PICKED_TRANSLATION
+                            .get_or_init(|| Mutex::new(tr.clone()))
+                            .lock()
+                            .expect(MUTEX_LOCK_MSG)
+                            .clone(),
+                    );
+                }
+
+                self.translations.finish_loading(translations, task_id);
+                focus(QUICK_SELECT_ID)
             }
             Message::TranslationPicked(item) => {
                 debug!("Byl vybrán překlad: {}", item);
-                picker.picked_translation = Some(item);
+
+                trace!("Nastavuji perzistentní překlad na {:?}", item);
+                *LAST_PICKED_TRANSLATION
+                    .get_or_init(|| Mutex::new(item.clone()))
+                    .try_lock()
+                    .expect(MUTEX_LOCK_MSG) = item.clone();
+
+                self.picked_translation = Some(item);
                 Task::done(Message::SelectionChanged.into())
             }
             Message::FromBookPicked(book) => {
                 debug!("Vybrána kniha (od) {}", book);
-                picker.indexes.picked_from_book = Some(book);
-                picker.indexes.picked_from_chapter = None;
-                picker.indexes.picked_from_verse = None;
+                self.indexes.picked_from_book = Some(book);
+                self.indexes.picked_from_chapter = None;
+                self.indexes.picked_from_verse = None;
                 let pick_to_book = Task::done(Message::ToBookPicked(book).into());
                 let selection_changed = Task::done(Message::SelectionChanged.into());
                 Task::chain(pick_to_book, selection_changed)
             }
             Message::FromChapterPicked(chapter) => {
                 debug!("Vybrána kapitola (od) {}", chapter);
-                picker.indexes.picked_from_chapter = Some(chapter);
-                picker.indexes.picked_from_verse = None;
+                self.indexes.picked_from_chapter = Some(chapter);
+                self.indexes.picked_from_verse = None;
                 let pick_to_chapter = Task::done(Message::ToChapterPicked(chapter).into());
                 let selection_changed = Task::done(Message::SelectionChanged.into());
                 Task::chain(pick_to_chapter, selection_changed)
             }
             Message::FromVersePicked(verse) => {
                 debug!("Vybrán verš (od) {}", verse);
-                picker.indexes.picked_from_verse = Some(verse);
+                self.indexes.picked_from_verse = Some(verse);
                 let pick_to_verse = Task::done(Message::ToVersePicked(verse).into());
                 let selection_changed = Task::done(Message::SelectionChanged.into());
                 Task::chain(pick_to_verse, selection_changed)
             }
             Message::ToBookPicked(book) => {
                 debug!("Vybrána kniha (do) {}", book);
-                picker.indexes.picked_to_book = Some(book);
-                picker.indexes.picked_to_chapter = None;
-                picker.indexes.picked_to_verse = None;
+                self.indexes.picked_to_book = Some(book);
+                self.indexes.picked_to_chapter = None;
+                self.indexes.picked_to_verse = None;
                 Task::done(Message::SelectionChanged.into())
             }
             Message::ToChapterPicked(chapter) => {
                 debug!("Vybrána kapitola (do) {}", chapter);
-                picker.indexes.picked_to_chapter = Some(chapter);
-                picker.indexes.picked_to_verse = None;
+                self.indexes.picked_to_chapter = Some(chapter);
+                self.indexes.picked_to_verse = None;
                 Task::done(Message::SelectionChanged.into())
             }
             Message::ToVersePicked(verse) => {
                 debug!("Vybrán verš (do) {}", verse);
-                picker.indexes.picked_to_verse = Some(verse);
+                self.indexes.picked_to_verse = Some(verse);
                 Task::done(Message::SelectionChanged.into())
             }
-            Message::ReturnToEditor => {
-                debug!("Vracím do editoru playlistů");
-                state.screen = Screen::EditPlaylist(PlaylistEditor::new(picker.playlist.clone()));
-                // Task::done(crate::playlist_editor::Message::LoadSongNameCache.into())
-                todo!()
-            }
-            Message::PickPassage => match picker.validate() {
+            Message::PickPassage => match self.validate() {
                 Ok((from, to)) => {
+                    let translation = self
+                        .picked_translation
+                        .as_ref()
+                        .expect("Zvalidovaná pasáž musí mít vybraný překlad");
                     debug!(
-                        "Pasáž úspěšně zvalidována, přidávám ji na konec playlistu a vracím se do editoru"
+                        "Pasáž úspěšně zvalidována, vracím se do editoru s pasáží {} - {} (překlad {})",
+                        from, to, translation.name
                     );
-                    picker.playlist.push_bible_passage(
-                        picker
-                            .picked_translation
-                            .as_ref()
-                            .expect("Pasáž byla validována, musí být vybrán překlad")
-                            .id,
-                        from,
-                        to,
-                    );
-
-                    Task::done(Message::ReturnToEditor.into())
+                    Task::done(Message::ReturnSelected(translation.id, from, to).into())
                 }
                 Err(err) => {
                     debug!("Pasáž není validní, zobrazuji chybovou hlášku");
-                    picker.err_msg = err.to_string();
+                    self.err_msg = err.to_string();
                     Task::none()
                 }
             },
-            Message::SelectionChanged => match picker.validate() {
+            Message::SelectionChanged => match self.validate() {
                 Ok((from, to)) => {
-                    trace!("Detekována validní pasáž, načítám preview");
-                    let conn = state.db.acquire();
-                    let translation_id = picker
+                    debug!("Detekována validní pasáž, načítám preview");
+                    let conn = db.acquire();
+                    let translation_id = self
                         .picked_translation
                         .as_ref()
                         .expect("Pasáž byla validována, musí být vybrán překlad")
                         .id;
-                    Task::perform(
-                        async move {
-                            let mut conn = conn.await?;
-                            Passage::load(from, to, translation_id, &mut conn).await
-                        },
-                        |res| match res {
-                            Ok(passage) => Message::SetPreview(passage).into(),
-                            Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
-                        },
-                    )
+
+                    let (task, handle) = Task::abortable(Task::future(async move {
+                        let mut conn = conn.await?;
+                        Passage::load(from, to, translation_id, &mut conn).await
+                    }));
+
+                    let preview = self
+                        .preview
+                        .get_or_insert(LazyLoadable::new(Message::SelectionChanged));
+
+                    preview.invalidate();
+                    match preview.start_loading(handle) {
+                        Some(task_id) => Task::map(task, move |res| match res {
+                            Ok(passage) => Message::PreviewLoaded(passage, task_id),
+                            Err(e) => Message::FatalError(format!("{:?}", e)),
+                        }),
+                        None => Task::none(),
+                    }
                 }
                 Err(_) => {
                     trace!("Pasáž není validní, vyčišťuji preview");
-                    Task::done(Message::ClearPreview.into())
+                    Task::done(Message::ClearPreview)
                 }
             },
-            Message::SetPreview(passage) => {
+            Message::PreviewLoaded(passage, task_id) => {
                 debug!("Nastavena pasáž pro preview");
-                picker.err_msg.clear();
-                picker.preview = Some(passage);
+                self.err_msg.clear();
+                self.preview
+                    .as_mut()
+                    .expect("Při začátku načítání je preview nastaveno na Some")
+                    .finish_loading(passage, task_id);
                 Task::none()
             }
             Message::ClearPreview => {
                 debug!("Mažu preview");
-                picker.preview = None;
+                self.preview = None;
                 Task::none()
             }
             Message::QuickPickerContentChanged(input) => {
                 trace!("Změnil se obsah quick inputu: \"{input}\"");
-                picker.quick_picker_content = input;
-                let indexes = picker.parse_quick_selection();
+                self.quick_picker_content = input;
+                let indexes = self.parse_quick_selection();
 
                 if indexes.validate().is_ok() {
                     trace!("Quick input je validní, nastavuji výběr na {:#?}", indexes);
-                    picker.indexes = indexes;
-                    Task::done(Message::SelectionChanged.into())
+                    self.indexes = indexes;
+                    Task::done(Message::SelectionChanged)
                 } else {
                     Task::none()
                 }
+            }
+            m @ Message::ReturnSelected(..) | m @ Message::Return | m @ Message::FatalError(_) => {
+                panic!(
+                    "Zpráva {:?} byla přeposlána až do update komponenty BiblePicker, toto by se nemělo stát. Měl bys na tuto zprávu reagovat tam, kde komponentu používáš a zavřít komponentu",
+                    m
+                );
             }
         }
     }
@@ -623,7 +653,7 @@ mod tests {
             ),
         ];
 
-        let mut picker = BiblePicker::new(PlaylistMetadata::mock_new(""));
+        let mut picker = BiblePicker::new();
 
         for (input, expected) in test_cases {
             picker.quick_picker_content = String::from(input);

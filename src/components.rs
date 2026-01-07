@@ -12,12 +12,13 @@ use iced::{
 };
 use log::trace;
 
+pub mod bible_picker;
 pub mod playlist_item_styles;
 pub mod song_picker;
 
 /// V programu je několikrát používán [`iced::widget::combo_box()`], jehož položky musí
 /// implementovat [`Display`]. Nám ovšem při výběru jde zpravidla o `id`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PickerItem {
     pub(crate) id: i64,
     pub(crate) name: String,
@@ -173,5 +174,13 @@ impl<T> LazyLoadableState<T> {
         } else {
             None
         }
+    }
+
+    /// Vrací `true` pokud je ve stavu [`Loaded`].
+    ///
+    /// [`Loaded`]: LazyLoadableState::Loaded
+    #[must_use]
+    pub fn is_loaded(&self) -> bool {
+        matches!(self, Self::Loaded(..))
     }
 }

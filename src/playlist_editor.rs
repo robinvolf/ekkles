@@ -44,6 +44,7 @@ use crate::{
     Ekkles, Screen,
     components::{
         LazyLoadable, LazyLoadableState,
+        bible_picker::{self, BiblePicker},
         song_picker::{self, SongPicker},
     },
     presenter::Presenter,
@@ -78,6 +79,7 @@ pub enum Message {
     MoveItemDown,
     DeleteItem,
     SongPicker(song_picker::Message),
+    BiblePicker(bible_picker::Message),
 }
 
 impl From<Message> for crate::Message {
@@ -86,22 +88,24 @@ impl From<Message> for crate::Message {
     }
 }
 
-impl From<song_picker::Message> for Message {
-    fn from(value: song_picker::Message) -> Self {
-        Message::SongPicker(value)
-    }
-}
-
 #[derive(Debug)]
 enum OpenedPicker {
     Song(song_picker::SongPicker),
-    Passage,
+    Passage(bible_picker::BiblePicker),
     None,
 }
 
 impl OpenedPicker {
     fn as_song_mut(&mut self) -> Option<&mut song_picker::SongPicker> {
         if let Self::Song(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    fn as_passage_mut(&mut self) -> Option<&mut bible_picker::BiblePicker> {
+        if let Self::Passage(v) = self {
             Some(v)
         } else {
             None
@@ -145,7 +149,7 @@ impl PlaylistEditor {
     pub fn view(&self) -> Element<Message> {
         match &self.picker {
             OpenedPicker::Song(song_picker) => Self::view_song_picker(song_picker),
-            OpenedPicker::Passage => todo!(),
+            OpenedPicker::Passage(bible_picker) => Self::view_bible_picker(bible_picker),
             OpenedPicker::None => self.view_editor(),
         }
     }
@@ -274,6 +278,20 @@ impl PlaylistEditor {
         ])
     }
 
+    pub fn view_bible_picker(picker: &BiblePicker) -> Element<Message> {
+        Into::<Element<Message>>::into(column![
+            container(row![
+                space().width(Length::FillPortion(1)),
+                container(picker.view().map(|msg| Message::BiblePicker(msg)))
+                    .width(Length::FillPortion(3))
+                    .max_width(1000),
+                space().width(Length::FillPortion(1)),
+            ])
+            .padding(10)
+            .center_x(Length::FillPortion(1))
+        ])
+    }
+
     /// Update funkce pro editor. Pokud je tato funkce zavolána nad jinou obrazovkou
     /// než [`Screen::EditPlaylist`], zpanikaří.
     pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
@@ -350,12 +368,8 @@ impl PlaylistEditor {
             }
             Message::AddBiblePassage => {
                 debug!("Přecházím na výběr playlistu");
-                // let playlist = editor.playlist.blocking_lock().clone();
-                // state.screen = Screen::PickBible(BiblePicker::new(playlist));
-                // Task::done(crate::Message::BiblePicker(
-                //     crate::bible_picker::Message::LoadTranslations,
-                // ))
-                todo!()
+                editor.picker = OpenedPicker::Passage(BiblePicker::new());
+                Task::none()
             }
             Message::OpenSongPicker => {
                 debug!("Přecházím na výběr písně");
@@ -614,6 +628,45 @@ impl PlaylistEditor {
                     msg => picker
                         .update(&state.db, msg)
                         .map(|msg| Message::SongPicker(msg).into()),
+                }
+            }
+            Message::BiblePicker(message) => {
+                let picker = editor
+                    .picker
+                    .as_passage_mut()
+                    .expect("Zpráva pro song_picker přišla, když song_picker nebyl vybrán");
+                match message {
+                    bible_picker::Message::Return => {
+                        editor.picker = OpenedPicker::None;
+                        Task::none()
+                    }
+                    bible_picker::Message::ReturnSelected(translation_id, from, to) => {
+                        debug!("Přidávám pasáž {from} - {to} (id překladu: {translation_id})");
+
+                        // Přidání vybrané písně do playlistu
+                        match editor.selected_index {
+                            Some(index) => {
+                                editor
+                                    .playlist
+                                    .add_bible_passage(translation_id, from, to, index)
+                            }
+                            None => editor.playlist.push_bible_passage(translation_id, from, to),
+                        }
+
+                        // Musíme znovu načíst cache pro náhled
+                        editor.playlist_preview_items.invalidate();
+
+                        // Zavřeme výběr písně
+                        editor.picker = OpenedPicker::None;
+
+                        Task::none()
+                    }
+                    bible_picker::Message::FatalError(e) => {
+                        Task::done(crate::Message::FatalErrorOccured(e))
+                    }
+                    msg => picker
+                        .update(&state.db, msg)
+                        .map(|msg| Message::BiblePicker(msg).into()),
                 }
             }
         }

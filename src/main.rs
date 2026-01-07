@@ -1,4 +1,4 @@
-use components::song_picker;
+use components::{bible_picker, song_picker};
 use config::Config;
 use iced::Element;
 use iced::window::{self, Id, Settings};
@@ -6,7 +6,6 @@ use iced::{Subscription, Task};
 use log::info;
 use sqlx::SqlitePool;
 
-mod bible_picker;
 mod components;
 mod config;
 mod error_screen;
@@ -27,10 +26,6 @@ enum Screen {
     ErrorOccurred(String),
     /// Editování playlistu
     EditPlaylist(playlist_editor::PlaylistEditor),
-    /// Vybírání písně k zařazení do playlistu
-    // PickSong(song_picker::SongPicker),
-    /// Vybírání biblické pasáže k zařazení do playlistu
-    PickBible(bible_picker::BiblePicker),
     /// Prezentování playlistu
     Presenter(presenter::Presenter),
 }
@@ -101,7 +96,6 @@ impl Ekkles {
             Screen::StartScreen(_) => Subscription::none(),
             Screen::ErrorOccurred(_) => Subscription::none(),
             Screen::EditPlaylist(editor) => editor.subscription(),
-            Screen::PickBible(_) => Subscription::none(),
             Screen::Presenter(presenter) => presenter.subscription(),
         };
 
@@ -114,8 +108,6 @@ impl Ekkles {
                 Screen::StartScreen(picker) => picker.view().map(|msg| msg.into()),
                 Screen::ErrorOccurred(err) => error_screen::view(err),
                 Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
-                // Screen::PickSong(song_picker) => song_picker.view().map(|msg| msg.into()),
-                Screen::PickBible(bible_picker) => bible_picker.view().map(|msg| msg.into()),
                 Screen::Presenter(presenter) => presenter.view_control().map(|msg| msg.into()),
             }
         } else if let Screen::Presenter(presenter) = &self.screen
