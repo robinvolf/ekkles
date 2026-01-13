@@ -14,6 +14,7 @@ use log::trace;
 
 pub mod bible_picker;
 pub mod playlist_item_styles;
+pub mod shortcuts;
 pub mod song_picker;
 
 /// V programu je několikrát používán [`iced::widget::combo_box()`], jehož položky musí
@@ -184,3 +185,5 @@ impl<T> LazyLoadableState<T> {
         matches!(self, Self::Loaded(..))
     }
 }
+
+// }

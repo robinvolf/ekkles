@@ -31,13 +31,10 @@ use iced::{
     Background, Color, Element, Length, Subscription, Task, Theme,
     alignment::{Horizontal, Vertical},
     color,
-    keyboard::{Event, Key, Modifiers, key},
-    widget::{
-        Container, Scrollable, button, column, container, row, scrollable, space, table, text,
-        text_input,
-    },
+    keyboard::{Key, Modifiers, key},
+    widget::{button, column, container, row, scrollable, space, table, text, text_input},
 };
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use sqlx::{Sqlite, pool::PoolConnection};
 
 use crate::{
@@ -45,6 +42,7 @@ use crate::{
     components::{
         LazyLoadable, LazyLoadableState,
         bible_picker::{self, BiblePicker},
+        shortcuts::KeyboardShortcut,
         song_picker::{self, SongPicker},
     },
     presenter::Presenter,
@@ -80,6 +78,29 @@ pub enum Message {
     DeleteItem,
     SongPicker(song_picker::Message),
     BiblePicker(bible_picker::Message),
+}
+
+#[derive(Clone, Copy, Debug, Hash)]
+enum KeyboardShortcutMessage {
+    MoveItemUp,
+    MoveItemDown,
+    MoveSelectionUp,
+    MoveSelectionDown,
+    DeleteItem,
+    ReturnToPlaylistPicker,
+}
+
+impl From<KeyboardShortcutMessage> for Message {
+    fn from(value: KeyboardShortcutMessage) -> Self {
+        match value {
+            KeyboardShortcutMessage::MoveItemUp => Message::MoveItemUp,
+            KeyboardShortcutMessage::MoveItemDown => Message::MoveItemDown,
+            KeyboardShortcutMessage::MoveSelectionUp => Message::MoveSelectionUp,
+            KeyboardShortcutMessage::MoveSelectionDown => Message::MoveSelectionDown,
+            KeyboardShortcutMessage::DeleteItem => Message::DeleteItem,
+            KeyboardShortcutMessage::ReturnToPlaylistPicker => Message::ReturnToPlaylistPicker,
+        }
+    }
 }
 
 impl From<Message> for crate::Message {
@@ -127,6 +148,7 @@ pub struct PlaylistEditor {
     selected_index: Option<usize>,
     /// Aktuální výběr, překresluje aktuální okno
     picker: OpenedPicker,
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 6],
 }
 
 impl PlaylistEditor {
@@ -138,6 +160,44 @@ impl PlaylistEditor {
             new_playlist_err_msg: String::new(),
             selected_index: None,
             picker: OpenedPicker::None,
+            shortcuts: [
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::ArrowUp),
+                    Modifiers::SHIFT,
+                    KeyboardShortcutMessage::MoveItemUp,
+                    "Posunout položku nahoru",
+                ),
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::ArrowDown),
+                    Modifiers::SHIFT,
+                    KeyboardShortcutMessage::MoveItemDown,
+                    "Posunout položku dolů",
+                ),
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::ArrowUp),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::MoveSelectionUp,
+                    "Posunout kurzor nahoru",
+                ),
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::ArrowDown),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::MoveSelectionDown,
+                    "Posunout kurzor dolů",
+                ),
+                KeyboardShortcut::new(
+                    Key::Character("d".into()),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::DeleteItem,
+                    "Smazat položku",
+                ),
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::Escape),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::ReturnToPlaylistPicker,
+                    "Zpět na výběr playlistů",
+                ),
+            ],
         }
     }
 
@@ -187,14 +247,6 @@ impl PlaylistEditor {
             None => column([]),
         };
 
-        let keyboard_shortcuts_help = column(
-            Self::keyboard_shortcuts()
-                .into_iter()
-                .map(|(key, modifiers, _msg, help)| {
-                    text(display_help(&key, &modifiers, help)).into()
-                }),
-        );
-
         let right_column = column![
             if self.selected_index.is_some() {
                 item_manipulation
@@ -204,7 +256,7 @@ impl PlaylistEditor {
             .padding(30)
             .spacing(10)
             .height(Length::Fill),
-            container(keyboard_shortcuts_help)
+            container(KeyboardShortcut::view(&self.shortcuts))
                 .align_bottom(Length::Fill)
                 .padding(30)
         ];
@@ -673,71 +725,9 @@ impl PlaylistEditor {
     }
 
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        iced::keyboard::listen().filter_map(|event| {
-            if let Event::KeyPressed { key, modifiers, .. } = event {
-                trace!("Přišel event z klávesnice: {:?}", (key.as_ref(), modifiers));
-                Self::keyboard_shortcuts()
-                    .into_iter()
-                    .find_map(|(key2, modifiers2, msg, _)| {
-                        if key == key2
-                            && (!modifiers.intersection(modifiers2).is_empty()
-                                || modifiers2.is_empty())
-                        {
-                            Some(msg.into())
-                        } else {
-                            None
-                        }
-                    })
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Seznam všech klávesových zkratek pro editor. Po jejich přidání sem jsou automaticky zahrnuty v nápovědě a ve zpracování eventů v `Self::subscription()`.
-    ///
-    /// # Pořadí
-    /// Pokud je klávesa použita alespoň 2x a to s modifierem a bez něj, akce s největším
-    /// počtem modifierů se musí vyskytovat první v seznamu.
-    fn keyboard_shortcuts() -> [(Key, Modifiers, Message, &'static str); 6] {
-        [
-            (
-                Key::Named(key::Named::ArrowUp),
-                Modifiers::SHIFT,
-                Message::MoveItemUp,
-                "Posunout položku nahoru",
-            ),
-            (
-                Key::Named(key::Named::ArrowDown),
-                Modifiers::SHIFT,
-                Message::MoveItemDown,
-                "Posunout položku dolů",
-            ),
-            (
-                Key::Named(key::Named::ArrowUp),
-                Modifiers::empty(),
-                Message::MoveSelectionUp,
-                "Posunout kurzor nahoru",
-            ),
-            (
-                Key::Named(key::Named::ArrowDown),
-                Modifiers::empty(),
-                Message::MoveSelectionDown,
-                "Posunout kurzor dolů",
-            ),
-            (
-                Key::Character("d".into()),
-                Modifiers::empty(),
-                Message::DeleteItem,
-                "Smazat položku",
-            ),
-            (
-                Key::Named(key::Named::Escape),
-                Modifiers::empty(),
-                Message::ReturnToPlaylistPicker,
-                "Zpět na výběr playlistů",
-            ),
-        ]
+        KeyboardShortcut::subscription(self.shortcuts.clone())
+            .map(Message::from)
+            .map(crate::Message::from)
     }
 }
 
@@ -785,27 +775,6 @@ fn playlist_item_button_style(
             ..Default::default()
         },
     }
-}
-
-fn display_help(key: &Key, mods: &Modifiers, help: &'static str) -> String {
-    let key = match key {
-        Key::Named(key::Named::ArrowDown) => "↓",
-        Key::Named(key::Named::ArrowUp) => "↑",
-        Key::Named(key::Named::Escape) => "ESC",
-        Key::Named(k) => {
-            warn!("Náhled pro neznámou klávesu: {:?}", k);
-            "?"
-        }
-        Key::Character(c) => c.as_str(),
-        Key::Unidentified => "?",
-    };
-
-    let modifiers = mods
-        .iter_names()
-        .map(|(name, _modifier)| String::from("+") + name)
-        .collect::<String>();
-
-    format!("{key} {modifiers} {help}")
 }
 
 fn playlist_table(editor: &PlaylistEditor) -> Element<Message> {
