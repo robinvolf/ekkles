@@ -1,20 +1,18 @@
-use std::time::Duration;
-
 use anyhow::{Context, Result, anyhow};
 use ekkles_data::playlist::PlaylistItem;
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
-use iced::keyboard::{Event, Key, key};
-use iced::time::every;
+use iced::Length::FillPortion;
+use iced::keyboard::{Key, Modifiers, key};
 use iced::widget::button::danger;
-use iced::widget::image::Handle;
-use iced::widget::{Image, button, column, container, radio, row, scrollable, slider, space, text};
-use iced::window::{Id, Screenshot, Settings, screenshot};
+use iced::widget::{button, column, container, radio, row, scrollable, slider, space, text};
+use iced::window::{Id, Settings};
 use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
 use log::{debug, trace};
 use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
 
 use crate::components::playlist_item_styles;
+use crate::components::shortcuts::KeyboardShortcut;
 use crate::start_screen::StartScreen;
 use crate::{Ekkles, Screen};
 
@@ -36,14 +34,6 @@ const TEXT_SIZE_MULTIPLIER_DEFAULT_U8: u8 = ((TEXT_SIZE_MULTIPLIER_DEFAULT
 const MAIN_TEXT_SIZE: f32 = 50.0;
 /// Velikost textu pro doplňující obsah snímku
 const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
-
-// Poznámka: Musí to být malé písmena, jinak se nematchnou na keycode v subscription()
-const MODE_FREEZE_KEY: &str = "f";
-const MODE_NORMAL_KEY: &str = "n";
-const MODE_BLANK_KEY: &str = "b";
-
-/// Prodleva mezi jednotlivými screenshoty prezentované obrazovky pro náhled
-const PREVIEW_PERIOD: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Slide {
@@ -195,26 +185,46 @@ pub enum Message {
     /// Prezentační okno bylo otevřeno pod daným ID
     PresentationWindowOpened(Id),
     /// Požaduje přepnutí prezentace na předchozí slajd
-    RequestPrevSlide,
+    PrevSlide,
     /// Požaduje přepnutí prezentace na následující slajd
-    RequestNextSlide,
+    NextSlide,
     /// Přepne prezentaci na slajd s daným indexem
     SelectSlide(usize),
     /// Zavře prezentační okno
     ClosePresentationWindow,
     /// Prezentační okno je zavřeno
     PresentationWindowClosed,
-    /// Změna módu prezentace
-    PresentationModeChanged(PresentationMode),
-    /// Zmrazit prezentaci, stejné jako PresentationModeChanged(PresentationMode::Frozen(_)),
-    /// ale bez specifikace indexu. Nutné pro zamražení ze subscription.
-    FreezePresentation,
+    /// Nastavit na normální výstup
+    NormalOuput,
+    /// Zmrazí výstup
+    FreezeOuput,
+    /// Nastaví výstup na černou obrazovku
+    BlankOuput,
     /// Změna multiplikátoru velikosti textu na snímku
     TextSizeMultiplierChanged(u8),
-    /// Měl by se updatovat náhled
-    UpdatePreview,
-    /// Nový náhled vytvořen
-    PreviewUpdated(Screenshot),
+}
+
+impl From<KeyboardShortcutMessage> for Message {
+    fn from(value: KeyboardShortcutMessage) -> Self {
+        match value {
+            KeyboardShortcutMessage::NextSlide => Message::NextSlide,
+            KeyboardShortcutMessage::PrevSlide => Message::PrevSlide,
+            KeyboardShortcutMessage::ClosePresentation => Message::ClosePresentationWindow,
+            KeyboardShortcutMessage::NormalOuput => Message::NormalOuput,
+            KeyboardShortcutMessage::FreezeOuput => Message::FreezeOuput,
+            KeyboardShortcutMessage::BlankOuput => Message::BlankOuput,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash)]
+enum KeyboardShortcutMessage {
+    NextSlide,
+    PrevSlide,
+    ClosePresentation,
+    NormalOuput,
+    FreezeOuput,
+    BlankOuput,
 }
 
 impl From<Message> for crate::Message {
@@ -237,8 +247,7 @@ pub struct Presenter {
     /// intervalu `[TEXT_SIZE_MULTIPLIER_MIN]` až [`TEXT_SIZE_MULTIPLIER_MAX`].
     /// Vysvětlení viz: [`TEXT_SIZE_MULTIPLIER_DEFAULT_U8`].
     text_scale: u8,
-    /// Screenshot prezentovaného okna pro náhled v ovládacím okně
-    preview: Option<Screenshot>,
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 6],
 }
 
 /// Přetvoří `playlist` na vektor slajdů složený z položek vytvořených z jednotlivých
@@ -308,52 +317,52 @@ impl Presenter {
                 mode: PresentationMode::Normal,
                 presentation_window_id: None,
                 text_scale: TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
-                preview: None,
+                shortcuts: [
+                    KeyboardShortcut::new(
+                        Key::Named(key::Named::ArrowUp),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::PrevSlide,
+                        "Předchozí slajd",
+                    ),
+                    KeyboardShortcut::new(
+                        Key::Named(key::Named::ArrowDown),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::NextSlide,
+                        "Následující slajd",
+                    ),
+                    KeyboardShortcut::new(
+                        Key::Named(key::Named::Escape),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::ClosePresentation,
+                        "Ukonči prezentaci",
+                    ),
+                    KeyboardShortcut::new(
+                        Key::Character("f".into()),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::FreezeOuput,
+                        "Zmrazit, výstup",
+                    ),
+                    KeyboardShortcut::new(
+                        Key::Character("n".into()),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::NormalOuput,
+                        "Normální, výstup",
+                    ),
+                    KeyboardShortcut::new(
+                        Key::Character("b".into()),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::BlankOuput,
+                        "Prázdný výstup",
+                    ),
+                ],
             })
         }
     }
 
-    /// Vrátí odebírané subscriptions pro obrazovku Prezentér. Odebíráme vstupy od klávesnice.
-    ///
-    /// # Klávesy
-    /// - Šipky ↑↓ pro posouvání právě promítané položky
-    /// - Escape pro ukončení prezentace
-    ///
-    /// # Náhled
-    /// - Každých [`PREVIEW_PERIOD`] bude proveden Screenshot prezentovaného okna,
-    ///   aby se aktualizoval náhled
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        Subscription::batch([
-            iced::keyboard::listen().filter_map(|event| {
-                if let Event::KeyPressed { key, modifiers, .. } = event {
-                    trace!("Přišel event z klávesnice: {:?}", (key.clone(), modifiers));
-                    match (key.as_ref(), modifiers) {
-                        (Key::Named(key::Named::ArrowUp), _) => {
-                            Some(Message::RequestPrevSlide.into())
-                        }
-                        (Key::Named(key::Named::ArrowDown), _) => {
-                            Some(Message::RequestNextSlide.into())
-                        }
-                        (Key::Named(key::Named::Escape), _) => {
-                            Some(Message::ClosePresentationWindow.into())
-                        }
-                        (Key::Character(MODE_FREEZE_KEY), _) => {
-                            Some(Message::FreezePresentation.into())
-                        }
-                        (Key::Character(MODE_NORMAL_KEY), _) => {
-                            Some(Message::PresentationModeChanged(PresentationMode::Normal).into())
-                        }
-                        (Key::Character(MODE_BLANK_KEY), _) => {
-                            Some(Message::PresentationModeChanged(PresentationMode::Blank).into())
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }),
-            every(PREVIEW_PERIOD).map(|_| Message::UpdatePreview.into()),
-        ])
+        KeyboardShortcut::subscription(self.shortcuts.clone())
+            .map(Message::from)
+            .map(crate::Message::from)
     }
 
     pub fn get_presentation_window_id(&self) -> Option<Id> {
@@ -434,23 +443,20 @@ impl Presenter {
         };
 
         let style_control = column![
+            radio("Normál", PresentationMode::Normal, Some(self.mode), |_| {
+                Message::NormalOuput
+            }),
             radio(
-                String::from("Normál (") + MODE_NORMAL_KEY + ")",
-                PresentationMode::Normal,
-                Some(self.mode),
-                Message::PresentationModeChanged
-            ),
-            radio(
-                String::from("Prázdný snímek (") + MODE_BLANK_KEY + ")",
+                "Prázdný snímek",
                 PresentationMode::Blank,
                 Some(self.mode),
-                Message::PresentationModeChanged
+                |_| { Message::BlankOuput }
             ),
             radio(
-                String::from("Zmrazit (") + MODE_FREEZE_KEY + ")",
+                "Zmrazit",
                 PresentationMode::Frozen(self.current_presented_index),
                 Some(self.mode),
-                Message::PresentationModeChanged
+                |_| { Message::FreezeOuput }
             ),
             space().height(Length::Fixed(30.0)),
             text("Škálování velikosti textu"),
@@ -465,8 +471,7 @@ impl Presenter {
             .spacing(5)
             .align_y(Alignment::Center)
         ]
-        .spacing(10)
-        .padding(30);
+        .spacing(10);
 
         let presentation_control = column![
             button("Nahoru")
@@ -474,14 +479,14 @@ impl Presenter {
                 .on_press_maybe(if first_slide_selected {
                     None
                 } else {
-                    Some(Message::RequestPrevSlide)
+                    Some(Message::PrevSlide)
                 }),
             button("Dolů")
                 .width(Length::Fill)
                 .on_press_maybe(if last_slide_selected {
                     None
                 } else {
-                    Some(Message::RequestNextSlide)
+                    Some(Message::NextSlide)
                 }),
             space().height(Length::Fixed(30.0)),
             button("Ukončit prezentaci (ESC)")
@@ -492,21 +497,6 @@ impl Presenter {
         .spacing(10)
         .padding(30);
 
-        let preview = match &self.preview {
-            Some(preview) => {
-                let (width, height) = (preview.size.width, preview.size.height);
-                let pixels = preview.rgba.clone();
-                container(
-                    Image::new(Handle::from_rgba(width, height, pixels))
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                )
-                .width(Length::Fill)
-                .height(Length::FillPortion(1))
-            }
-            None => container(space().height(Length::Shrink).width(Length::Shrink)),
-        };
-
         Into::<Element<Message>>::into(container(
             row![
                 presentation_control
@@ -516,11 +506,18 @@ impl Presenter {
                     scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
                         .width(Length::FillPortion(2))
                         .height(Length::Fill),
-                    preview,
+                    // preview,
                 ],
-                style_control
-                    .width(Length::FillPortion(1))
-                    .height(Length::Fill)
+                column![
+                    container(
+                        style_control
+                            .width(Length::FillPortion(1))
+                            .height(Length::Fill)
+                    )
+                    .align_top(FillPortion(1)),
+                    KeyboardShortcut::view(&self.shortcuts),
+                ]
+                .padding(30),
             ]
             .padding(10)
             .height(Length::Fill)
@@ -582,17 +579,12 @@ impl Presenter {
                 presenter.presentation_window_id = Some(id);
                 Task::none()
             }
-            Message::PresentationModeChanged(presentation_mode) => {
-                debug!("Nastavuji prezentační režim na {:?}", presentation_mode);
-                presenter.mode = presentation_mode;
-                Task::none()
-            }
             Message::TextSizeMultiplierChanged(multiplier) => {
                 debug!("Nastavuji multiplikátor velikosti textu na {multiplier}");
                 presenter.text_scale = multiplier;
                 Task::none()
             }
-            Message::RequestPrevSlide => {
+            Message::PrevSlide => {
                 debug!("Požadavek k přechodu na předchozí slajd");
                 if presenter.is_first_slide_selected() {
                     Task::none()
@@ -601,7 +593,7 @@ impl Presenter {
                     Task::done(Message::SelectSlide(new_slide_index).into())
                 }
             }
-            Message::RequestNextSlide => {
+            Message::NextSlide => {
                 debug!("Požadavek k přechodu na následující slajd");
                 if presenter.is_last_slide_selected() {
                     Task::none()
@@ -610,27 +602,20 @@ impl Presenter {
                     Task::done(Message::SelectSlide(new_slide_index).into())
                 }
             }
-            Message::FreezePresentation => {
+            Message::FreezeOuput => {
                 let current_index = presenter.current_presented_index;
                 debug!("Zamražuji prezentaci na indexu {current_index}");
-                Task::done(
-                    Message::PresentationModeChanged(PresentationMode::Frozen(current_index))
-                        .into(),
-                )
+                presenter.mode = PresentationMode::Frozen(current_index);
+                Task::none()
             }
-            Message::UpdatePreview => match presenter.presentation_window_id {
-                Some(id) => {
-                    trace!("Provádím screenshot prezentovaného okna");
-                    screenshot(id).map(|screenshot| Message::PreviewUpdated(screenshot).into())
-                }
-                None => {
-                    trace!("Ještě neexistuje prezentující okno, nelze vytvořit náhled");
-                    Task::none()
-                }
-            },
-            Message::PreviewUpdated(screenshot) => {
-                trace!("Náhled byl aktualizován");
-                presenter.preview = Some(screenshot);
+            Message::NormalOuput => {
+                debug!("Nastavuji prezentační výstup na normální");
+                presenter.mode = PresentationMode::Normal;
+                Task::none()
+            }
+            Message::BlankOuput => {
+                debug!("Nastavuji prezentační výstup na prázdný snímek");
+                presenter.mode = PresentationMode::Blank;
                 Task::none()
             }
         }
