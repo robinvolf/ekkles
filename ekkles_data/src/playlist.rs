@@ -568,7 +568,7 @@ impl PlaylistItem {
 /// Struktura reprezentující playlist, která vlastní obsah svých položek. Je tedy "nezávislá",
 /// je možné použít čistě tuto strukturu a bez dalších přístupů do databáze z ní vytvořit
 /// promítatelné slajdy.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Playlist {
     pub id: i64,
     pub name: String,
@@ -598,8 +598,7 @@ impl Playlist {
             "SELECT part_order, kind FROM playlist_parts WHERE playlist_id = $1 ORDER BY part_order ASC",
             id
         ).fetch_all(conn.as_mut()).await
-            .context("Nelze načíst další část playlistu z databáze")?
-        ;
+            .context("Nelze načíst další část playlistu z databáze")?;
 
         // Pořadí vkládání nemusíme řešit, z databáze to přijde již seřazené
         let mut items = Vec::new();
@@ -679,6 +678,16 @@ impl Playlist {
 
     pub fn into_items(self) -> Vec<PlaylistItem> {
         self.items
+    }
+
+    /// Vloží položku playlistu `item` na pozici `position`. Pokud `position` není platný index, zpanikaří.
+    pub fn insert_item(&mut self, item: PlaylistItem, position: usize) {
+        self.items.insert(position, item);
+    }
+
+    /// Přidá položku playlistu `item` na poslední pozici v playlistu.
+    pub fn push_item(&mut self, item: PlaylistItem) {
+        self.items.push(item);
     }
 }
 

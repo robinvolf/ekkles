@@ -129,6 +129,7 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                     Tab::Song => {
                         debug!("Vytvářím novou píseň \"{}\"", new_name);
                         let new_song = Song {
+                            id: 0,
                             title: new_name.to_string(),
                             author: None,
                             parts: HashMap::new(),

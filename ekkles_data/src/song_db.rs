@@ -126,6 +126,7 @@ impl Song {
         }
 
         let song = Self {
+            id,
             title,
             author,
             parts,

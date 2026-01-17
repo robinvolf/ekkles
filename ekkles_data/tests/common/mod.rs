@@ -36,6 +36,7 @@ pub async fn setup_db_with_bible_and_songs() -> SqlitePool {
     let pool = setup_db_with_bible().await;
 
     let haleluja = Song {
+        id: 0,
         title: String::from("Haleluja (Svatý Pán Bůh Všemohoucí)"),
         author: None,
         parts: HashMap::from([
@@ -78,6 +79,7 @@ pub async fn setup_db_with_bible_and_songs() -> SqlitePool {
     };
 
     let christ_arose = Song {
+        id: 0,
         title: String::from("Christ Arose"),
         author: Some(String::from("Robert Lowry, 1874")),
         parts: HashMap::from([

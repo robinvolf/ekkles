@@ -108,6 +108,7 @@ impl Song {
         let parts: HashMap<_, _> = lyrics.into_iter().map(|x| (x.0, x.1)).collect();
 
         Ok(Self {
+            id: 0,
             title,
             author,
             parts,
@@ -393,6 +394,7 @@ mod tests {
 </song>"#;
 
         let christ_arose_expected = Song {
+            id: 0,
             title: String::from("Christ Arose"),
             author: Some(String::from("Robert Lowry, 1874")),
             parts: HashMap::from([
@@ -432,6 +434,7 @@ mod tests {
         };
 
         let haleluja_expected = Song {
+            id: 0,
             title: String::from("Haleluja (Svatý Pán Bůh Všemohoucí)"),
             author: None,
             parts: HashMap::from([

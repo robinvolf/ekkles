@@ -8,7 +8,8 @@ mod common;
 async fn save_load_happy_path() {
     let pool = common::setup_bare_db().await;
 
-    let song = Song {
+    let mut song = Song {
+        id: 0,
         title: String::from("Haleluja (Svatý Pán Bůh Všemohoucí)"),
         author: None,
         parts: HashMap::from([
@@ -58,6 +59,8 @@ async fn save_load_happy_path() {
         }
     };
 
+    song.id = id;
+
     match Song::load_from_db(id, &mut pool.acquire().await.unwrap()).await {
         Ok(loaded_song) => assert_eq!(loaded_song, song),
         Err(e) => {
@@ -72,6 +75,7 @@ async fn save_corrupted_song() {
     let pool = common::setup_bare_db().await;
 
     let song = Song {
+        id: 0,
         title: String::from("Haleluja (Svatý Pán Bůh Všemohoucí)"),
         author: None,
         parts: HashMap::from([

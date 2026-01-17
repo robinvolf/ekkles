@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use ekkles_data::bible::indexing::VerseIndices;
 use ekkles_data::playlist::PlaylistItem;
 use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
 use iced::Length::FillPortion;
@@ -7,7 +8,7 @@ use iced::widget::button::danger;
 use iced::widget::{button, column, container, radio, row, scrollable, slider, space, text};
 use iced::window::{Id, Settings};
 use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
 
@@ -34,21 +35,6 @@ const TEXT_SIZE_MULTIPLIER_DEFAULT_U8: u8 = ((TEXT_SIZE_MULTIPLIER_DEFAULT
 const MAIN_TEXT_SIZE: f32 = 50.0;
 /// Velikost textu pro doplňující obsah snímku
 const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Slide {
-    Passage(PassageSlide),
-    Song(SongSlide),
-}
-
-impl Slide {
-    fn present(&self, text_size_multiplier: f32) -> Element<Message> {
-        match self {
-            Slide::Passage(passage_slide) => passage_slide.present(text_size_multiplier),
-            Slide::Song(song_slide) => song_slide.present(text_size_multiplier),
-        }
-    }
-}
 
 /// Jeden slajd při promítání pasáže
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,8 +145,8 @@ pub enum PresentationMode {
     Normal,
     /// Prázdný snímek
     Blank,
-    /// Obrazovka zmražena na snímku s daným indexem
-    Frozen(usize),
+    /// Obrazovka zmražena na položce `item` na slajdu položky `item_slide`
+    Frozen { item: usize, item_slide: usize },
 }
 
 /// Ruční implementace [`PartialEq`] a [`Eq`], aby se v případě [`PresentationMode::Frozen`]
@@ -171,7 +157,7 @@ impl PartialEq for PresentationMode {
         match (self, other) {
             (PresentationMode::Normal, PresentationMode::Normal) => true,
             (PresentationMode::Blank, PresentationMode::Blank) => true,
-            (PresentationMode::Frozen(_), PresentationMode::Frozen(_)) => true,
+            (PresentationMode::Frozen { .. }, PresentationMode::Frozen { .. }) => true,
             _ => false,
         }
     }
@@ -188,8 +174,8 @@ pub enum Message {
     PrevSlide,
     /// Požaduje přepnutí prezentace na následující slajd
     NextSlide,
-    /// Přepne prezentaci na slajd s daným indexem
-    SelectSlide(usize),
+    /// Přepne prezentaci na položku `item` na slajd `slide`
+    SelectSlide { item: usize, slide: usize },
     /// Zavře prezentační okno
     ClosePresentationWindow,
     /// Prezentační okno je zavřeno
@@ -238,62 +224,20 @@ pub struct Presenter {
     /// Id okna s prezentací
     presentation_window_id: Option<Id>,
     /// Prezentovaný playlist
-    playlist_slides: Vec<Slide>,
-    /// Index aktuálně prezentované položky
-    current_presented_index: usize,
+    playlist: Playlist,
+    /// Index aktuálně prezentované položky playlistu
+    item_index: usize,
+    /// Index slajdu prezentované položky. Každá položka playlistu může být rozbalena do
+    /// `n` slajdů. Toto je index v intervalu `0..n`.
+    item_slide_index: usize,
     /// Režim prezentace
     mode: PresentationMode,
     /// Multiplikátor velikost textu na snímku, při použití se normalizuje do
     /// intervalu `[TEXT_SIZE_MULTIPLIER_MIN]` až [`TEXT_SIZE_MULTIPLIER_MAX`].
     /// Vysvětlení viz: [`TEXT_SIZE_MULTIPLIER_DEFAULT_U8`].
     text_scale: u8,
+    /// Klávesové zkratky
     shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 6],
-}
-
-/// Přetvoří `playlist` na vektor slajdů složený z položek vytvořených z jednotlivých
-/// položek playlistu ve stejném pořadí.
-fn playlist_to_slides(playlist: Playlist, verses_per_slide: usize) -> Vec<Slide> {
-    let items = playlist.into_items();
-    let slides: Vec<Slide> = items
-        .into_iter()
-        .flat_map(|item| match item {
-            PlaylistItem::BiblePassage(passage) => {
-                let name = passage.get_translation_name();
-                let (from, to) = passage.get_range();
-                passage
-                    .get_verses()
-                    .chunks(verses_per_slide)
-                    .map(|verses| {
-                        Slide::Passage(PassageSlide::new(
-                            name.to_string(),
-                            from,
-                            to,
-                            verses.to_vec(),
-                        ))
-                    })
-                    .collect::<Vec<Slide>>()
-            }
-            PlaylistItem::Song(song) => {
-                let title = song.title;
-                song.order
-                    .into_iter()
-                    .map(|part_name| {
-                        let part_content = song
-                            .parts
-                            .get(&part_name)
-                            .expect("Píseň musí obsahovat všechny svoje části");
-                        Slide::Song(SongSlide::new(
-                            title.clone(),
-                            part_name,
-                            part_content.to_string(),
-                        ))
-                    })
-                    .collect()
-            }
-        })
-        .collect();
-
-    slides
 }
 
 impl Presenter {
@@ -312,8 +256,9 @@ impl Presenter {
             Err(anyhow!("Nelze prezentovat prázdný playlist"))
         } else {
             Ok(Presenter {
-                playlist_slides: playlist_to_slides(playlist, VERSES_PER_SLIDE),
-                current_presented_index: 0,
+                playlist,
+                item_index: 0,
+                item_slide_index: 0,
                 mode: PresentationMode::Normal,
                 presentation_window_id: None,
                 text_scale: TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
@@ -370,11 +315,23 @@ impl Presenter {
     }
 
     fn is_first_slide_selected(&self) -> bool {
-        self.current_presented_index == 0
+        self.item_index == 0 && self.item_slide_index == 0
     }
 
     fn is_last_slide_selected(&self) -> bool {
-        self.current_presented_index == self.playlist_slides.len() - 1
+        if self.playlist.items.is_empty() {
+            error!("Prázdný playlist v prezentaci");
+            true
+        } else {
+            let last_item_selected = self.item_index == self.playlist.items.len() - 1;
+            let last_slide_of_last_item_selected = self.item_slide_index
+                == num_slides(
+                    &self.playlist.items[self.playlist.items.len() - 1],
+                    VERSES_PER_SLIDE,
+                ) - 1;
+
+            last_item_selected && last_slide_of_last_item_selected
+        }
     }
 
     /// Zkonstruuje GUI pro ovládací okno
@@ -386,47 +343,47 @@ impl Presenter {
             fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style,
         );
 
-        let slide_list =
-            self.playlist_slides
-                .iter()
-                .enumerate()
-                .map(|(index, slide)| match slide {
-                    Slide::Passage(slide) => {
-                        let (from, to) = slide.passage_indexes;
-                        let (maybe_msg, style): MsgAndStyle =
-                            if index == self.current_presented_index {
-                                (None, playlist_item_styles::passage_selected)
-                            } else {
-                                (
-                                    Some(Message::SelectSlide(index)),
-                                    playlist_item_styles::passage,
-                                )
-                            };
-                        button(text!("Pasáž {} - {}", from, to))
-                            .width(Length::Fill)
-                            .on_press_maybe(maybe_msg)
-                            .style(style)
-                            .into()
-                    }
-                    Slide::Song(slide) => {
-                        let title = &slide.title;
-                        let part_name = &slide.part_name;
-                        let (maybe_msg, style): MsgAndStyle =
-                            if index == self.current_presented_index {
-                                (None, playlist_item_styles::song_selected)
-                            } else {
-                                (
-                                    Some(Message::SelectSlide(index)),
-                                    playlist_item_styles::song,
-                                )
-                            };
-                        button(text!("Píseň {}: {}", title, part_name))
-                            .width(Length::Fill)
-                            .on_press_maybe(maybe_msg)
-                            .style(style)
-                            .into()
-                    }
-                });
+        // let slide_list =
+        //     self.playlist_slides
+        //         .iter()
+        //         .enumerate()
+        //         .map(|(index, slide)| match slide {
+        //             Slide::Passage(slide) => {
+        //                 let (from, to) = slide.passage_indexes;
+        //                 let (maybe_msg, style): MsgAndStyle =
+        //                     if index == self.current_presented_index {
+        //                         (None, playlist_item_styles::passage_selected)
+        //                     } else {
+        //                         (
+        //                             Some(Message::SelectSlide(index)),
+        //                             playlist_item_styles::passage,
+        //                         )
+        //                     };
+        //                 button(text!("Pasáž {} - {}", from, to))
+        //                     .width(Length::Fill)
+        //                     .on_press_maybe(maybe_msg)
+        //                     .style(style)
+        //                     .into()
+        //             }
+        //             Slide::Song(slide) => {
+        //                 let title = &slide.title;
+        //                 let part_name = &slide.part_name;
+        //                 let (maybe_msg, style): MsgAndStyle =
+        //                     if index == self.current_presented_index {
+        //                         (None, playlist_item_styles::song_selected)
+        //                     } else {
+        //                         (
+        //                             Some(Message::SelectSlide(index)),
+        //                             playlist_item_styles::song,
+        //                         )
+        //                     };
+        //                 button(text!("Píseň {}: {}", title, part_name))
+        //                     .width(Length::Fill)
+        //                     .on_press_maybe(maybe_msg)
+        //                     .style(style)
+        //                     .into()
+        //             }
+        //         });
 
         let first_slide_selected = self.is_first_slide_selected();
         let last_slide_selected = self.is_last_slide_selected();
@@ -454,7 +411,10 @@ impl Presenter {
             ),
             radio(
                 "Zmrazit",
-                PresentationMode::Frozen(self.current_presented_index),
+                PresentationMode::Frozen {
+                    item: self.item_index,
+                    item_slide: self.item_slide_index
+                },
                 Some(self.mode),
                 |_| { Message::FreezeOuput }
             ),
@@ -503,11 +463,11 @@ impl Presenter {
                     .width(Length::FillPortion(1))
                     .height(Length::Fill),
                 column![
-                    scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
-                        .width(Length::FillPortion(2))
-                        .height(Length::Fill),
+                    // scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
+                    //     .height(Length::Fill),
                     // preview,
-                ],
+                ]
+                .width(Length::FillPortion(2)),
                 column![
                     container(
                         style_control
@@ -531,11 +491,17 @@ impl Presenter {
 
         match self.mode {
             PresentationMode::Normal => {
-                self.playlist_slides[self.current_presented_index].present(text_size_multiplier)
+                // self.playlist_slides[self.current_presented_index].present(text_size_multiplier)
+                render_slide(
+                    &self.playlist.items,
+                    self.item_index,
+                    self.item_slide_index,
+                    text_size_multiplier,
+                )
             }
             PresentationMode::Blank => blank_slide(),
-            PresentationMode::Frozen(frozen_index) => {
-                self.playlist_slides[frozen_index].present(text_size_multiplier)
+            PresentationMode::Frozen { item, item_slide } => {
+                render_slide(&self.playlist.items, item, item_slide, text_size_multiplier)
             }
         }
     }
@@ -547,9 +513,10 @@ impl Presenter {
         };
 
         match msg {
-            Message::SelectSlide(index) => {
-                debug!("Vybírám slajd s indexem {index}");
-                presenter.current_presented_index = index;
+            Message::SelectSlide { item, slide } => {
+                debug!("Vybírám položku indexem {item}, se slajdem {slide}");
+                presenter.item_index = item;
+                presenter.item_slide_index = slide;
                 Task::none()
             }
             Message::ClosePresentationWindow => {
@@ -589,8 +556,17 @@ impl Presenter {
                 if presenter.is_first_slide_selected() {
                     Task::none()
                 } else {
-                    let new_slide_index = presenter.current_presented_index - 1;
-                    Task::done(Message::SelectSlide(new_slide_index).into())
+                    let (item, slide) = if presenter.item_slide_index == 0 {
+                        let prev_item_slides_num = num_slides(
+                            &presenter.playlist.items[presenter.item_index - 1],
+                            VERSES_PER_SLIDE,
+                        );
+
+                        (presenter.item_index - 1, prev_item_slides_num - 1)
+                    } else {
+                        (presenter.item_index, presenter.item_slide_index - 1)
+                    };
+                    Task::done(Message::SelectSlide { item, slide }.into())
                 }
             }
             Message::NextSlide => {
@@ -598,14 +574,27 @@ impl Presenter {
                 if presenter.is_last_slide_selected() {
                     Task::none()
                 } else {
-                    let new_slide_index = presenter.current_presented_index + 1;
-                    Task::done(Message::SelectSlide(new_slide_index).into())
+                    let curr_item_slides_num = num_slides(
+                        &presenter.playlist.items[presenter.item_index],
+                        VERSES_PER_SLIDE,
+                    );
+
+                    let (item, slide) = if presenter.item_slide_index == curr_item_slides_num - 1 {
+                        (presenter.item_index + 1, 0)
+                    } else {
+                        (presenter.item_index, presenter.item_slide_index + 1)
+                    };
+                    Task::done(Message::SelectSlide { item, slide }.into())
                 }
             }
             Message::FreezeOuput => {
-                let current_index = presenter.current_presented_index;
-                debug!("Zamražuji prezentaci na indexu {current_index}");
-                presenter.mode = PresentationMode::Frozen(current_index);
+                let item_index = presenter.item_index;
+                let slide_index = presenter.item_slide_index;
+                debug!("Zamražuji prezentaci na indexu {item_index}:{slide_index}");
+                presenter.mode = PresentationMode::Frozen {
+                    item: item_index,
+                    item_slide: slide_index,
+                };
                 Task::none()
             }
             Message::NormalOuput => {
@@ -619,6 +608,83 @@ impl Presenter {
                 Task::none()
             }
         }
+    }
+}
+
+/// Vytvoří grafickou reprezentaci `item_slide_index`-tého slajdu `item_index`-té položky.
+/// Pokud je jeden z indexů neplatný, zpanikaří.
+///
+/// Text Bude Škálován pomocí `scale`.
+fn render_slide(
+    items: &[PlaylistItem],
+    item_index: usize,
+    item_slide_index: usize,
+    scale: f32,
+) -> Element<Message> {
+    let item = &items[item_index];
+
+    match item {
+        PlaylistItem::BiblePassage(passage) => {
+            let verses_text_size = MAIN_TEXT_SIZE * scale;
+            let indexes_text_size = ADDITIONAL_TEXT_SIZE * scale;
+
+            let verses_content: String = passage
+                .get_verses()
+                .iter()
+                .map(|(number, content)| format!("{}: {}", number, content))
+                .collect();
+
+            let indices: VerseIndices = passage.get_range().into();
+            let indices_content = indices.to_string();
+
+            let verses = container(
+                text(verses_content)
+                    .size(verses_text_size)
+                    .wrapping(text::Wrapping::WordOrGlyph), // Abychom věděli, kdy změnit velikost textu
+            )
+            .center(Length::Fill);
+            let indexes = container(
+                text(indices_content)
+                    .align_x(Alignment::Center)
+                    .size(indexes_text_size),
+            )
+            .center_x(Length::Fill)
+            .align_bottom(Length::Shrink);
+
+            container(column![verses, indexes])
+                .style(black_background)
+                .into()
+        }
+        PlaylistItem::Song(song) => {
+            let content_size = MAIN_TEXT_SIZE * scale;
+            let title_size = ADDITIONAL_TEXT_SIZE * scale;
+
+            let part_index = &song.order[item_slide_index];
+            let content = &song.parts[part_index];
+            let title = &song.title;
+
+            let content = container(text(content).align_x(Alignment::Center).size(content_size))
+                .center(Length::Fill);
+
+            let title = container(text(title).align_x(Alignment::Center).size(title_size))
+                .center_x(Length::Fill)
+                .align_bottom(Length::Shrink);
+
+            container(column![content, title])
+                .style(black_background)
+                .into()
+        }
+    }
+}
+
+/// Spočítá počet slajdů, kolik `item` zabere.
+fn num_slides(item: &PlaylistItem, verses_per_slide: usize) -> usize {
+    match item {
+        PlaylistItem::BiblePassage(passage) => {
+            let num_verses = passage.get_verses().iter().count();
+            num_verses / verses_per_slide + num_verses % verses_per_slide
+        }
+        PlaylistItem::Song(song) => song.parts.len(),
     }
 }
 

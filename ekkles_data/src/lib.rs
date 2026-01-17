@@ -24,6 +24,7 @@ pub type PartTag = String;
 /// - Jednotlivé položky vektoru `order` nesmí obsahovat znak mezery ` `
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Song {
+    pub id: i64,
     /// Název písně
     pub title: String,
     /// Volitelný autor písně
@@ -67,6 +68,7 @@ mod tests {
     #[test]
     fn check_invariants_test_space() {
         let song = Song {
+            id: 0,
             title: String::from("Haleluja (Svatý Pán Bůh Všemohoucí)"),
             author: None,
             parts: HashMap::from([
@@ -122,6 +124,7 @@ mod tests {
     #[test]
     fn check_invariants_test_matching_tags() {
         let song = Song {
+            id: 0,
             title: String::from("Haleluja (Svatý Pán Bůh Všemohoucí)"),
             author: None,
             parts: HashMap::from([
