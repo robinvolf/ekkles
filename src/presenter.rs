@@ -683,6 +683,9 @@ fn render_slide(
 
             let verses_content: String = passage
                 .get_verses()
+                .chunks(VERSES_PER_SLIDE)
+                .nth(item_slide_index)
+                .expect("Index slajdu pasáže není validní")
                 .iter()
                 .map(|(number, content)| format!("{}: {}", number, content))
                 .collect();
@@ -737,7 +740,7 @@ fn num_slides(item: &PlaylistItem, verses_per_slide: usize) -> usize {
             let num_verses = passage.get_verses().iter().count();
             num_verses / verses_per_slide + num_verses % verses_per_slide
         }
-        PlaylistItem::Song(song) => song.parts.len(),
+        PlaylistItem::Song(song) => song.order.len(),
     }
 }
 
