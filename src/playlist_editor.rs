@@ -42,6 +42,7 @@ use crate::{
     components::{
         LazyLoadable, LazyLoadableState,
         bible_picker::{self, BiblePicker},
+        playlist_item_styles::playlist_item_button_style,
         shortcuts::KeyboardShortcut,
         song_picker::{self, SongPicker},
     },
@@ -728,52 +729,6 @@ impl PlaylistEditor {
         KeyboardShortcut::subscription(self.shortcuts.clone())
             .map(Message::from)
             .map(crate::Message::from)
-    }
-}
-
-fn playlist_item_button_style(
-    item: &PlaylistItemMetadata,
-    selected: bool,
-) -> fn(&Theme, button::Status) -> button::Style {
-    const SONG: Color = color!(0x7bccf6);
-    const PASSAGE: Color = color!(0xfec57f);
-    const SELECTED_SCALER: f32 = 0.7;
-    const SONG_SELECTED: Color = {
-        let mut c = SONG;
-        c.r *= SELECTED_SCALER;
-        c.g *= SELECTED_SCALER;
-        c.b *= SELECTED_SCALER;
-        c
-    };
-    const PASSAGE_SELECTED: Color = {
-        let mut c = PASSAGE;
-        c.r *= SELECTED_SCALER;
-        c.g *= SELECTED_SCALER;
-        c.b *= SELECTED_SCALER;
-        c
-    };
-
-    match (item, selected) {
-        (PlaylistItemMetadata::BiblePassage { .. }, true) => {
-            |_theme: &Theme, _status| button::Style {
-                background: Some(Background::Color(PASSAGE_SELECTED)),
-                ..Default::default()
-            }
-        }
-        (PlaylistItemMetadata::BiblePassage { .. }, false) => {
-            |_theme: &Theme, _status| button::Style {
-                background: Some(Background::Color(PASSAGE)),
-                ..Default::default()
-            }
-        }
-        (PlaylistItemMetadata::Song(_), true) => |_theme: &Theme, _status| button::Style {
-            background: Some(Background::Color(SONG_SELECTED)),
-            ..Default::default()
-        },
-        (PlaylistItemMetadata::Song(_), false) => |_theme: &Theme, _status| button::Style {
-            background: Some(Background::Color(SONG)),
-            ..Default::default()
-        },
     }
 }
 

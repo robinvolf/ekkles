@@ -1,3 +1,5 @@
+use core::num;
+
 use anyhow::{Context, Result, anyhow};
 use ekkles_data::bible::indexing::VerseIndices;
 use ekkles_data::playlist::PlaylistItem;
@@ -5,14 +7,15 @@ use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
 use iced::Length::FillPortion;
 use iced::keyboard::{Key, Modifiers, key};
 use iced::widget::button::danger;
-use iced::widget::{button, column, container, radio, row, scrollable, slider, space, text};
+use iced::widget::text::LineHeight;
+use iced::widget::{button, column, container, radio, row, scrollable, slider, space, table, text};
 use iced::window::{Id, Settings};
-use iced::{Alignment, Color, Element, Length, Subscription, Task, Theme};
+use iced::{Alignment, Color, Element, Length, Pixels, Subscription, Task, Theme};
 use log::{debug, error, trace};
 use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
 
-use crate::components::playlist_item_styles;
+use crate::components::playlist_item_styles::{self, playlist_item_button_style2};
 use crate::components::shortcuts::KeyboardShortcut;
 use crate::start_screen::StartScreen;
 use crate::{Ekkles, Screen};
@@ -334,56 +337,106 @@ impl Presenter {
         }
     }
 
-    /// Zkonstruuje GUI pro ovládací okno
-    pub fn view_control(&self) -> Element<Message> {
-        // Na několika místech se musí explicitně specifikovat typ, protože automatická
-        // inference typů shoří kvůli ukazateli na funkci
-        type MsgAndStyle = (
-            Option<Message>,
-            fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style,
+    fn view_helper_slide_table(&self) -> table::Table<Message> {
+        let slide_text_size = Pixels::from(16);
+        let slide_text_lineheight = LineHeight::default().to_absolute(slide_text_size);
+
+        let name_column = table::column("Název", |(i, playlist_item): (usize, &PlaylistItem)| {
+            let selected = i == self.item_index;
+            let style = playlist_item_styles::playlist_item_button_style2(playlist_item, selected);
+
+            // Iced 1.14 má podivný layout v tabulkách, když dám do jednoho sloupce .height(Lentgh::Fill), tak se to nematchne na nejvyšší sloupec na daném řádku, ale spapá to všechno dostupné místo, musíme si tak pomoct a spočítat potřebnou výšku sami
+            let (text, num_slides) = match playlist_item {
+                PlaylistItem::BiblePassage(passage) => {
+                    let translation = passage.get_translation_name();
+                    let indices: VerseIndices = passage.get_range().into();
+                    let text = text!("{indices} ({translation})");
+                    let num_slides = passage.get_verses().iter().count();
+                    (text, num_slides)
+                }
+                PlaylistItem::Song(song) => {
+                    let text = text(song.title.clone()); // Tady asi nemusí být klonování nutné
+                    let num_slides = song.order.len();
+                    (text, num_slides)
+                }
+            };
+
+            // Manuální výpočet výšky, aby se rovnala výšce buňky s náhledem na stejném řádku
+            let button_height = Pixels::from(
+                num_slides as f32
+                    * (slide_text_lineheight.0
+                        + button::DEFAULT_PADDING.top
+                        + button::DEFAULT_PADDING.bottom),
+            );
+
+            button(text)
+                .style(style)
+                .height(button_height)
+                .width(Length::Fill)
+                .on_press(Message::SelectSlide { item: i, slide: 0 })
+        });
+
+        let preview_column = table::column(
+            text("Náhled"),
+            |(item_i, playlist_item): (usize, &PlaylistItem)| {
+                // let style = playlist_item_styles::playlist_item_button_style2(playlist_item, selected);
+
+                let item_selected = item_i == self.item_index;
+
+                let content: Vec<String> = match playlist_item {
+                    PlaylistItem::BiblePassage(passage) => passage
+                        .get_verses()
+                        .iter()
+                        .map(|(index, content)| format!("{index}: {content}"))
+                        .collect(),
+                    PlaylistItem::Song(song) => song
+                        .order
+                        .iter()
+                        .map(|key| {
+                            let content = &song.parts[key].replace('\n', " ");
+                            format!("[{key}]: {content}")
+                        })
+                        .collect(),
+                };
+
+                let slide_buttons = content
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slide_i, content)| {
+                        let slide_selected = item_selected && slide_i == self.item_slide_index;
+                        let style = playlist_item_button_style2(playlist_item, slide_selected);
+                        button(
+                            text(content)
+                                .wrapping(text::Wrapping::None)
+                                .line_height(slide_text_lineheight)
+                                .size(slide_text_size),
+                        )
+                        .style(style)
+                        .width(Length::Fill)
+                        .on_press(Message::SelectSlide {
+                            item: item_i,
+                            slide: slide_i,
+                        })
+                    })
+                    .map(Element::from);
+
+                column(slide_buttons)
+            },
         );
 
-        // let slide_list =
-        //     self.playlist_slides
-        //         .iter()
-        //         .enumerate()
-        //         .map(|(index, slide)| match slide {
-        //             Slide::Passage(slide) => {
-        //                 let (from, to) = slide.passage_indexes;
-        //                 let (maybe_msg, style): MsgAndStyle =
-        //                     if index == self.current_presented_index {
-        //                         (None, playlist_item_styles::passage_selected)
-        //                     } else {
-        //                         (
-        //                             Some(Message::SelectSlide(index)),
-        //                             playlist_item_styles::passage,
-        //                         )
-        //                     };
-        //                 button(text!("Pasáž {} - {}", from, to))
-        //                     .width(Length::Fill)
-        //                     .on_press_maybe(maybe_msg)
-        //                     .style(style)
-        //                     .into()
-        //             }
-        //             Slide::Song(slide) => {
-        //                 let title = &slide.title;
-        //                 let part_name = &slide.part_name;
-        //                 let (maybe_msg, style): MsgAndStyle =
-        //                     if index == self.current_presented_index {
-        //                         (None, playlist_item_styles::song_selected)
-        //                     } else {
-        //                         (
-        //                             Some(Message::SelectSlide(index)),
-        //                             playlist_item_styles::song,
-        //                         )
-        //                     };
-        //                 button(text!("Píseň {}: {}", title, part_name))
-        //                     .width(Length::Fill)
-        //                     .on_press_maybe(maybe_msg)
-        //                     .style(style)
-        //                     .into()
-        //             }
-        //         });
+        table(
+            [
+                name_column.width(Length::FillPortion(1)),
+                preview_column.width(Length::FillPortion(5)),
+            ],
+            self.playlist.items.iter().enumerate(),
+        )
+        .padding(0)
+    }
+
+    /// Zkonstruuje GUI pro ovládací okno
+    pub fn view_control(&self) -> Element<Message> {
+        let slide_list = self.view_helper_slide_table();
 
         let first_slide_selected = self.is_first_slide_selected();
         let last_slide_selected = self.is_last_slide_selected();
@@ -463,8 +516,7 @@ impl Presenter {
                     .width(Length::FillPortion(1))
                     .height(Length::Fill),
                 column![
-                    // scrollable(column(slide_list).spacing(5).align_x(Alignment::Center))
-                    //     .height(Length::Fill),
+                    scrollable(slide_list).height(Length::Fill),
                     // preview,
                 ]
                 .width(Length::FillPortion(2)),
@@ -483,6 +535,7 @@ impl Presenter {
             .height(Length::Fill)
             .align_y(Alignment::Center),
         ))
+        // .explain(iced::Color::BLACK)
     }
 
     /// Zkonstruuuje GUI pro prezentační okno
