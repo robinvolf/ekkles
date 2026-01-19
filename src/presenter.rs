@@ -39,108 +39,6 @@ const MAIN_TEXT_SIZE: f32 = 50.0;
 /// Velikost textu pro doplňující obsah snímku
 const ADDITIONAL_TEXT_SIZE: f32 = 30.0;
 
-/// Jeden slajd při promítání pasáže
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PassageSlide {
-    /// Název překladu, ze které je pasáž přebraná
-    translation_name: String,
-    /// Indexy celkové pasáže od-do
-    passage_indexes: (VerseIndex, VerseIndex),
-    /// Jednotlivé verše daného slajdu
-    verses: Vec<(u8, String)>,
-}
-
-impl PassageSlide {
-    fn new(
-        translation_name: String,
-        from: VerseIndex,
-        to: VerseIndex,
-        verses: Vec<(u8, String)>,
-    ) -> Self {
-        Self {
-            translation_name,
-            passage_indexes: (from, to),
-            verses,
-        }
-    }
-
-    fn present(&self, text_size_multiplier: f32) -> Element<Message> {
-        let verses_text_size = MAIN_TEXT_SIZE * text_size_multiplier;
-        let indexes_text_size = ADDITIONAL_TEXT_SIZE * text_size_multiplier;
-
-        let verses_content: String = self
-            .verses
-            .iter()
-            .map(|(number, content)| format!("{}: {}", number, content))
-            .collect();
-
-        let indexes_content = format!("{} - {}", self.passage_indexes.0, self.passage_indexes.1);
-
-        let verses = container(
-            text(verses_content)
-                .size(verses_text_size)
-                .wrapping(text::Wrapping::WordOrGlyph), // Abychom věděli, kdy změnit velikost textu
-        )
-        .center(Length::Fill);
-        let indexes = container(
-            text(indexes_content)
-                .align_x(Alignment::Center)
-                .size(indexes_text_size),
-        )
-        .center_x(Length::Fill)
-        .align_bottom(Length::Shrink);
-
-        container(column![verses, indexes])
-            .style(black_background)
-            .into()
-    }
-}
-
-/// Jeden slajd při promítání písně
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SongSlide {
-    /// Název písně
-    title: String,
-    /// Název části písně
-    part_name: String,
-    /// Obsah dané části písně
-    content: String,
-}
-
-impl SongSlide {
-    fn new(title: String, part_name: String, content: String) -> Self {
-        Self {
-            title,
-            part_name,
-            content,
-        }
-    }
-
-    fn present(&self, text_size_multiplier: f32) -> Element<Message> {
-        let content_size = MAIN_TEXT_SIZE * text_size_multiplier;
-        let title_size = ADDITIONAL_TEXT_SIZE * text_size_multiplier;
-
-        let content = container(
-            text(&self.content)
-                .align_x(Alignment::Center)
-                .size(content_size),
-        )
-        .center(Length::Fill);
-
-        let title = container(
-            text(&self.title)
-                .align_x(Alignment::Center)
-                .size(title_size),
-        )
-        .center_x(Length::Fill)
-        .align_bottom(Length::Shrink);
-
-        container(column![content, title])
-            .style(black_background)
-            .into()
-    }
-}
-
 /// Aby bylo možné globálně změnit prezentaci (začernit, zmrazit)
 #[derive(Debug, Clone, Copy)]
 pub enum PresentationMode {
@@ -546,15 +444,14 @@ impl Presenter {
             PresentationMode::Normal => {
                 // self.playlist_slides[self.current_presented_index].present(text_size_multiplier)
                 render_slide(
-                    &self.playlist.items,
-                    self.item_index,
+                    &self.playlist.items[self.item_index],
                     self.item_slide_index,
                     text_size_multiplier,
                 )
             }
             PresentationMode::Blank => blank_slide(),
             PresentationMode::Frozen { item, item_slide } => {
-                render_slide(&self.playlist.items, item, item_slide, text_size_multiplier)
+                render_slide(&self.playlist.items[item], item_slide, text_size_multiplier)
             }
         }
     }
@@ -668,14 +565,7 @@ impl Presenter {
 /// Pokud je jeden z indexů neplatný, zpanikaří.
 ///
 /// Text Bude Škálován pomocí `scale`.
-fn render_slide(
-    items: &[PlaylistItem],
-    item_index: usize,
-    item_slide_index: usize,
-    scale: f32,
-) -> Element<Message> {
-    let item = &items[item_index];
-
+fn render_slide(item: &PlaylistItem, item_slide_index: usize, scale: f32) -> Element<Message> {
     match item {
         PlaylistItem::BiblePassage(passage) => {
             let verses_text_size = MAIN_TEXT_SIZE * scale;
