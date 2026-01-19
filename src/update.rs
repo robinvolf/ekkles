@@ -17,7 +17,7 @@ impl Ekkles {
             }
             (Message::WindowClosed(id), Screen::Presenter(presenter))
                 if presenter
-                    .get_window_id()
+                    .get_presentation_window_id()
                     .is_some_and(|pres_id| id == pres_id) =>
             {
                 debug!("Zavřeno okno prezentace");

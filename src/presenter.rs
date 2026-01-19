@@ -1,16 +1,18 @@
-use core::num;
+use std::iter;
 
 use anyhow::{Context, Result, anyhow};
 use ekkles_data::bible::indexing::VerseIndices;
+use ekkles_data::playlist::Playlist;
 use ekkles_data::playlist::PlaylistItem;
-use ekkles_data::{bible::indexing::VerseIndex, playlist::Playlist};
 use iced::Length::FillPortion;
 use iced::keyboard::{Key, Modifiers, key};
 use iced::widget::button::danger;
+use iced::widget::responsive;
 use iced::widget::text::LineHeight;
 use iced::widget::{button, column, container, radio, row, scrollable, slider, space, table, text};
+use iced::window;
 use iced::window::{Id, Settings};
-use iced::{Alignment, Color, Element, Length, Pixels, Subscription, Task, Theme};
+use iced::{Alignment, Color, Element, Length, Pixels, Size, Subscription, Task, Theme};
 use log::{debug, error, trace};
 use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
@@ -89,6 +91,8 @@ pub enum Message {
     BlankOuput,
     /// Změna multiplikátoru velikosti textu na snímku
     TextSizeMultiplierChanged(u8),
+    /// Prezentační okno změnilo velikost
+    PresentationWindowResized(Size),
 }
 
 impl From<KeyboardShortcutMessage> for Message {
@@ -123,7 +127,7 @@ impl From<Message> for crate::Message {
 #[derive(Debug, Clone)]
 pub struct Presenter {
     /// Id okna s prezentací
-    presentation_window_id: Option<Id>,
+    presentation_window: Option<PresentationWindow>,
     /// Prezentovaný playlist
     playlist: Playlist,
     /// Index aktuálně prezentované položky playlistu
@@ -142,10 +146,6 @@ pub struct Presenter {
 }
 
 impl Presenter {
-    pub fn get_window_id(&self) -> Option<Id> {
-        self.presentation_window_id
-    }
-
     /// Vytvoří nový `Presenter`. Playlist musí obsahovat alespoň jednu položku,
     /// jinak není co prezentovat a funkce vrátí Error.
     pub async fn try_new(playlist_id: i64, conn: &mut PoolConnection<Sqlite>) -> Result<Presenter> {
@@ -161,7 +161,7 @@ impl Presenter {
                 item_index: 0,
                 item_slide_index: 0,
                 mode: PresentationMode::Normal,
-                presentation_window_id: None,
+                presentation_window: None,
                 text_scale: TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
                 shortcuts: [
                     KeyboardShortcut::new(
@@ -206,13 +206,25 @@ impl Presenter {
     }
 
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        KeyboardShortcut::subscription(self.shortcuts.clone())
-            .map(Message::from)
-            .map(crate::Message::from)
+        Subscription::batch([
+            KeyboardShortcut::subscription(self.shortcuts.clone())
+                .map(Message::from)
+                .map(crate::Message::from),
+            window::resize_events()
+                .with(self.presentation_window.map(|w| w.id))
+                .filter_map(|(presentation_window_id, (id, size))| {
+                    if presentation_window_id.is_some_and(|w_id| w_id == id) {
+                        Some(Message::PresentationWindowResized(size))
+                    } else {
+                        None
+                    }
+                })
+                .map(crate::Message::from),
+        ])
     }
 
     pub fn get_presentation_window_id(&self) -> Option<Id> {
-        self.presentation_window_id
+        self.presentation_window.map(|w| w.id)
     }
 
     fn is_first_slide_selected(&self) -> bool {
@@ -408,16 +420,40 @@ impl Presenter {
         .spacing(10)
         .padding(30);
 
+        let preview = iter::from_fn(|| {
+            self.presentation_window.map(|w| {
+                column![
+                    text("Náhled").align_x(Alignment::Center),
+                    view_helper_preview(
+                        &self.playlist.items[self.item_index],
+                        self.item_slide_index,
+                        w.size,
+                        normalize_text_multiplier(self.text_scale),
+                    )
+                ]
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .height(Length::FillPortion(1))
+                .into()
+            })
+        })
+        .take(1);
+
         Into::<Element<Message>>::into(container(
             row![
                 presentation_control
                     .width(Length::FillPortion(1))
                     .height(Length::Fill),
-                column![
-                    scrollable(slide_list).height(Length::Fill),
-                    // preview,
-                ]
-                .width(Length::FillPortion(2)),
+                column(
+                    [scrollable(slide_list).height(Length::FillPortion(2)).into()]
+                        .into_iter()
+                        // [space().height(1000).width(Length::Fill).into()]
+                        //     .into_iter()
+                        .chain(preview)
+                )
+                .width(Length::FillPortion(2))
+                .align_x(Alignment::Center)
+                .spacing(10),
                 column![
                     container(
                         style_control
@@ -441,14 +477,11 @@ impl Presenter {
         let text_size_multiplier = normalize_text_multiplier(self.text_scale);
 
         match self.mode {
-            PresentationMode::Normal => {
-                // self.playlist_slides[self.current_presented_index].present(text_size_multiplier)
-                render_slide(
-                    &self.playlist.items[self.item_index],
-                    self.item_slide_index,
-                    text_size_multiplier,
-                )
-            }
+            PresentationMode::Normal => render_slide(
+                &self.playlist.items[self.item_index],
+                self.item_slide_index,
+                text_size_multiplier,
+            ),
             PresentationMode::Blank => blank_slide(),
             PresentationMode::Frozen { item, item_slide } => {
                 render_slide(&self.playlist.items[item], item_slide, text_size_multiplier)
@@ -473,8 +506,9 @@ impl Presenter {
                 debug!("Ukončuji prezentaci, vracím se na seznam playlistů");
                 iced::window::close(
                     presenter
-                        .presentation_window_id
-                        .expect("Nelze zavřít prezentační okno, pokud nebylo otevřeno"),
+                        .presentation_window
+                        .expect("Nelze zavřít prezentační okno, pokud nebylo otevřeno")
+                        .id,
                 )
                 .chain(Task::done(Message::PresentationWindowClosed.into()))
             }
@@ -484,16 +518,21 @@ impl Presenter {
             }
             Message::OpenPresentationWindow => {
                 debug!("Otevírám prezentační okno");
-                let (id, task) = iced::window::open(Settings {
+                let settings = Settings {
                     fullscreen: true,
                     ..Settings::default()
-                });
-                presenter.presentation_window_id = Some(id);
+                };
+                let size = settings.size;
+                let (id, task) = iced::window::open(settings);
+                presenter.presentation_window = Some(PresentationWindow::new(id, size));
                 task.map(|id| Message::PresentationWindowOpened(id).into())
             }
             Message::PresentationWindowOpened(id) => {
                 debug!("Prezentační okno otevřeno pod id {id}");
-                presenter.presentation_window_id = Some(id);
+                assert!(
+                    presenter.presentation_window.is_some_and(|w| w.id == id),
+                    "Prezentační okno otevřeno pod jiným ID, jak je toto možné?"
+                );
                 Task::none()
             }
             Message::TextSizeMultiplierChanged(multiplier) => {
@@ -557,8 +596,59 @@ impl Presenter {
                 presenter.mode = PresentationMode::Blank;
                 Task::none()
             }
+            Message::PresentationWindowResized(size) => {
+                debug!(
+                    "Prezentační okno změněno na velikost {}x{} (ŠxV)",
+                    size.width, size.height
+                );
+                presenter
+                    .presentation_window
+                    .as_mut() // Velmi důležité, jinak to chceme referenci
+                    .expect("Prezentační okno může změnit velikost pouze až potom co bylo otevřeno")
+                    .size = size;
+                Task::none()
+            }
         }
     }
+}
+
+fn view_helper_preview(
+    item: &PlaylistItem,
+    item_slide_index: usize,
+    presentation_window_size: Size,
+    text_size_multiplier: f32,
+) -> Element<Message> {
+    let content_build_closure = move |size: Size| {
+        let scale1 = size.width / presentation_window_size.width;
+        let scale2 = size.height / presentation_window_size.height;
+        let scale = f32::min(scale1, scale2);
+
+        let width = presentation_window_size.width * scale;
+        let height = presentation_window_size.height * scale;
+
+        trace!(
+            "Velikost okna {}x{}, dostupná velikost pro náhled {}x{}, použiju všechnu dostupnou šířku, výška bude {}, škálování bude {}",
+            presentation_window_size.width,
+            presentation_window_size.height,
+            size.width,
+            size.height,
+            height,
+            scale
+        );
+        container(
+            container(render_slide(
+                item,
+                item_slide_index,
+                scale * text_size_multiplier,
+            ))
+            .width(Length::Fixed(width))
+            .height(Length::Fixed(height)),
+        )
+        .center_x(Length::Fill)
+        .into()
+    };
+
+    responsive(content_build_closure).into()
 }
 
 /// Vytvoří grafickou reprezentaci `item_slide_index`-tého slajdu `item_index`-té položky.
@@ -665,5 +755,17 @@ fn black_background(_theme: &Theme) -> container::Style {
         text_color: Some(Color::WHITE),
         background: Some(iced::Background::Color(Color::BLACK)),
         ..Default::default()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PresentationWindow {
+    id: Id,
+    size: Size,
+}
+
+impl PresentationWindow {
+    fn new(id: Id, size: Size) -> Self {
+        Self { id, size }
     }
 }
