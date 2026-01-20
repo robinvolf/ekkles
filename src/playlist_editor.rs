@@ -183,8 +183,8 @@ impl PlaylistEditor {
 
     pub fn view(&self) -> Element<Message> {
         match &self.picker {
-            OpenedPicker::Song(song_picker) => Self::view_song_picker(song_picker),
-            OpenedPicker::Passage(bible_picker) => Self::view_bible_picker(bible_picker),
+            OpenedPicker::Song(song_picker) => song_picker.view().map(Message::SongPicker),
+            OpenedPicker::Passage(bible_picker) => bible_picker.view().map(Message::BiblePicker),
             OpenedPicker::None => self.view_editor(),
         }
     }
@@ -285,20 +285,6 @@ impl PlaylistEditor {
                 .align_x(Horizontal::Center),
                 playlist_items.width(Length::FillPortion(3)),
                 right_column.width(Length::FillPortion(1)),
-            ])
-            .padding(10)
-            .center_x(Length::FillPortion(1))
-        ])
-    }
-
-    pub fn view_song_picker(picker: &SongPicker) -> Element<Message> {
-        Into::<Element<Message>>::into(column![
-            container(row![
-                space().width(Length::FillPortion(1)),
-                container(picker.view().map(|msg| Message::SongPicker(msg)))
-                    .width(Length::FillPortion(3))
-                    .max_width(1000),
-                space().width(Length::FillPortion(1)),
             ])
             .padding(10)
             .center_x(Length::FillPortion(1))

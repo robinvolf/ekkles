@@ -233,24 +233,30 @@ impl BiblePicker {
         .spacing(10);
 
         Into::<Element<Message>>::into(
-            container(
-                column![
-                    quick_picker,
-                    detailed_picker,
-                    passage_preview.height(200),
-                    row![
-                        submit_button,
-                        button("Zpět").on_press(Message::Return).width(Length::Fill)
+            container(row![
+                space().width(Length::FillPortion(1)),
+                container(
+                    column![
+                        quick_picker,
+                        detailed_picker,
+                        passage_preview.height(200),
+                        row![
+                            submit_button,
+                            button("Zpět").on_press(Message::Return).width(Length::Fill)
+                        ]
+                        .spacing(10)
+                        .width(Length::Fill)
                     ]
-                    .spacing(10)
-                    .width(Length::Fill)
-                ]
-                .spacing(100)
-                .align_x(Alignment::Center)
-                .width(Length::Fill),
-            )
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
+                    .spacing(100)
+                    .align_x(Alignment::Center)
+                    .width(Length::Fill),
+                )
+                .width(Length::FillPortion(3))
+                .max_width(1000),
+                space().width(Length::FillPortion(1)),
+            ])
+            .padding(10)
+            .center(Length::Fill),
         )
     }
 

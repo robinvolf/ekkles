@@ -5,7 +5,9 @@ use crate::components::{LazyLoadable, LazyLoadableState, PickerItem};
 use ekkles_data::Song;
 use iced::{
     Alignment, Element, Length, Task,
-    widget::{Container, button, column, combo_box, container, row, rule, scrollable, space, text},
+    widget::{
+        Container, button, center, column, combo_box, container, row, rule, scrollable, space, text,
+    },
 };
 use log::debug;
 use sqlx::SqlitePool;
@@ -67,31 +69,41 @@ impl SongPicker {
             None => container(space()),
         };
 
-        Into::<Element<Message>>::into(container(
-            column![
-                row![
-                    picker.align_top(Length::Fill).center_x(Length::Fill),
-                    preview.center(Length::Fill)
-                ]
-                .spacing(10),
-                row![
-                    button("Zpět")
-                        .on_press(Message::Return)
-                        .width(Length::Fill)
-                        .height(Length::Shrink),
-                    button("Potvrdit")
-                        .width(Length::Fill)
-                        .height(Length::Shrink)
-                        .on_press_maybe(
-                            self.selected
-                                .as_ref()
-                                .map(|s| Message::ReturnSelected(s.clone()))
-                        )
-                ]
-                .spacing(10)
-            ]
-            .spacing(10),
-        ))
+        Into::<Element<Message>>::into(
+            container(row![
+                space().width(Length::FillPortion(1)),
+                container(
+                    column![
+                        row![
+                            picker.align_top(Length::Fill).center_x(Length::Fill),
+                            preview.center(Length::Fill)
+                        ]
+                        .spacing(10),
+                        row![
+                            button("Zpět")
+                                .on_press(Message::Return)
+                                .width(Length::Fill)
+                                .height(Length::Shrink),
+                            button("Potvrdit")
+                                .width(Length::Fill)
+                                .height(Length::Shrink)
+                                .on_press_maybe(
+                                    self.selected
+                                        .as_ref()
+                                        .map(|s| Message::ReturnSelected(s.clone()))
+                                )
+                        ]
+                        .spacing(10)
+                    ]
+                    .spacing(10),
+                )
+                .width(Length::FillPortion(3))
+                .max_width(1000),
+                space().width(Length::FillPortion(1)),
+            ])
+            .padding(10)
+            .center(Length::Fill),
+        )
     }
 
     pub fn update(&mut self, db: &SqlitePool, message: Message) -> Task<Message> {

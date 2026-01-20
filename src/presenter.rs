@@ -1,7 +1,9 @@
 use std::iter;
 
-use anyhow::{Context, Result, anyhow};
-use ekkles_data::bible::indexing::VerseIndices;
+use anyhow::Context;
+use anyhow::{Result, anyhow};
+use ekkles_data::Song;
+use ekkles_data::bible::indexing::{Passage, VerseIndices};
 use ekkles_data::playlist::Playlist;
 use ekkles_data::playlist::PlaylistItem;
 use iced::Length::FillPortion;
@@ -14,12 +16,13 @@ use iced::window;
 use iced::window::{Id, Settings};
 use iced::{Alignment, Color, Element, Length, Pixels, Size, Subscription, Task, Theme};
 use log::{debug, error, trace};
-use sqlx::Sqlite;
-use sqlx::pool::PoolConnection;
 
 use crate::components::OpenedPicker;
+use crate::components::bible_picker::{self, BiblePicker};
 use crate::components::playlist_item_styles::{self, playlist_item_button_style2};
 use crate::components::shortcuts::KeyboardShortcut;
+use crate::components::song_picker;
+use crate::components::song_picker::SongPicker;
 use crate::start_screen::StartScreen;
 use crate::{Ekkles, Screen};
 
@@ -79,7 +82,10 @@ pub enum Message {
     /// Požaduje přepnutí prezentace na následující slajd
     NextSlide,
     /// Přepne prezentaci na položku `item` na slajd `slide`
-    SelectSlide { item: usize, slide: usize },
+    SelectSlide {
+        item: usize,
+        slide: usize,
+    },
     /// Zavře prezentační okno
     ClosePresentationWindow,
     /// Prezentační okno je zavřeno
@@ -94,6 +100,14 @@ pub enum Message {
     TextSizeMultiplierChanged(u8),
     /// Prezentační okno změnilo velikost
     PresentationWindowResized(Size),
+    /// Byl otevřen výběr písní
+    OpenSongPicker,
+    /// Zpráva z výběru písní
+    SongPicker(song_picker::Message),
+    /// Byla vybrána nová položka, přidáme do playlistu
+    AddToPlaylist(PlaylistItem),
+    OpenBiblePicker,
+    BiblePicker(bible_picker::Message),
 }
 
 impl From<KeyboardShortcutMessage> for Message {
@@ -344,8 +358,16 @@ impl Presenter {
         .padding(0)
     }
 
-    /// Zkonstruuje GUI pro ovládací okno
     pub fn view_control(&self) -> Element<Message> {
+        match &self.picker {
+            OpenedPicker::Song(song_picker) => song_picker.view().map(Message::SongPicker),
+            OpenedPicker::Passage(bible_picker) => bible_picker.view().map(Message::BiblePicker),
+            OpenedPicker::None => self.view_control_no_picker(),
+        }
+    }
+
+    /// Zkonstruuje GUI pro ovládací okno
+    pub fn view_control_no_picker(&self) -> Element<Message> {
         let slide_list = self.view_helper_slide_table();
 
         let first_slide_selected = self.is_first_slide_selected();
@@ -411,6 +433,13 @@ impl Presenter {
                 } else {
                     Some(Message::NextSlide)
                 }),
+            space().height(Length::Fixed(30.0)),
+            button("Přidat píseň")
+                .width(Length::Fill)
+                .on_press(Message::OpenSongPicker),
+            button("Přidat verše")
+                .width(Length::Fill)
+                .on_press(Message::OpenBiblePicker),
             space().height(Length::Fixed(30.0)),
             button("Ukončit prezentaci (ESC)")
                 .width(Length::Fill)
@@ -604,6 +633,92 @@ impl Presenter {
                     .expect("Prezentační okno může změnit velikost pouze až potom co bylo otevřeno")
                     .size = size;
                 Task::none()
+            }
+            Message::OpenSongPicker => {
+                debug!("Otevírám výběr písně");
+                presenter.picker = OpenedPicker::Song(SongPicker::new());
+                Task::none()
+            }
+            Message::SongPicker(message) => {
+                let picker = presenter
+                    .picker
+                    .as_song_mut()
+                    .expect("Zpráva pro song_picker přišla, když song_picker nebyl vybrán");
+                match message {
+                    song_picker::Message::Return => {
+                        presenter.picker = OpenedPicker::None;
+                        Task::none()
+                    }
+                    song_picker::Message::ReturnSelected(picker_item) => {
+                        debug!("Načítám píseň {:?}", &picker_item);
+
+                        let conn = state.db.acquire();
+                        Task::perform(
+                            async move {
+                                let mut conn =
+                                    conn.await.context("Nelze získat připojení k databázi")?;
+                                Song::load_from_db(picker_item.id, &mut conn).await
+                            },
+                            |res| match res {
+                                Ok(s) => Message::AddToPlaylist(PlaylistItem::Song(s)).into(),
+                                Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                            },
+                        )
+                    }
+                    song_picker::Message::FatalError(e) => {
+                        Task::done(crate::Message::FatalErrorOccured(e))
+                    }
+                    msg => picker
+                        .update(&state.db, msg)
+                        .map(|msg| Message::SongPicker(msg).into()),
+                }
+            }
+            Message::AddToPlaylist(item) => {
+                debug!("Přidávám do playlistu položku{:?}", item);
+                presenter.playlist.push_item(item);
+                presenter.picker = OpenedPicker::None;
+                Task::none()
+            }
+            Message::OpenBiblePicker => {
+                debug!("Otevírám výběr pasáže");
+                presenter.picker = OpenedPicker::Passage(BiblePicker::new());
+                Task::none()
+            }
+            Message::BiblePicker(message) => {
+                let picker = presenter
+                    .picker
+                    .as_passage_mut()
+                    .expect("Zpráva pro bible_picker přišla, když bible_picker nebyl vybrán");
+                match message {
+                    bible_picker::Message::Return => {
+                        presenter.picker = OpenedPicker::None;
+                        Task::none()
+                    }
+                    bible_picker::Message::ReturnSelected(translation_id, from, to) => {
+                        debug!("Načítám pasáž {from}-{to}");
+
+                        let conn = state.db.acquire();
+                        Task::perform(
+                            async move {
+                                let mut conn =
+                                    conn.await.context("Nelze získat připojení k databázi")?;
+                                Passage::load(from, to, translation_id, &mut conn).await
+                            },
+                            |res| match res {
+                                Ok(p) => {
+                                    Message::AddToPlaylist(PlaylistItem::BiblePassage(p)).into()
+                                }
+                                Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                            },
+                        )
+                    }
+                    bible_picker::Message::FatalError(e) => {
+                        Task::done(crate::Message::FatalErrorOccured(e))
+                    }
+                    msg => picker
+                        .update(&state.db, msg)
+                        .map(|msg| Message::BiblePicker(msg).into()),
+                }
             }
         }
     }
