@@ -425,10 +425,12 @@ impl Presenter {
                 column![
                     text("Náhled").align_x(Alignment::Center),
                     view_helper_preview(
-                        &self.playlist.items[self.item_index],
+                        &self.playlist.items,
+                        self.item_index,
                         self.item_slide_index,
+                        &self.mode,
                         w.size,
-                        normalize_text_multiplier(self.text_scale),
+                        self.text_scale,
                     )
                 ]
                 .width(Length::Fill)
@@ -472,21 +474,16 @@ impl Presenter {
         // .explain(iced::Color::BLACK)
     }
 
-    /// Zkonstruuuje GUI pro prezentační okno
+    /// Vytvoří GUI pro prezentované okno
     pub fn view_presentation(&self) -> Element<Message> {
-        let text_size_multiplier = normalize_text_multiplier(self.text_scale);
-
-        match self.mode {
-            PresentationMode::Normal => render_slide(
-                &self.playlist.items[self.item_index],
-                self.item_slide_index,
-                text_size_multiplier,
-            ),
-            PresentationMode::Blank => blank_slide(),
-            PresentationMode::Frozen { item, item_slide } => {
-                render_slide(&self.playlist.items[item], item_slide, text_size_multiplier)
-            }
-        }
+        view_presentation_helper(
+            &self.playlist.items,
+            self.item_index,
+            self.item_slide_index,
+            &self.mode,
+            self.text_scale,
+            1.0,
+        )
     }
 
     pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
@@ -612,12 +609,35 @@ impl Presenter {
     }
 }
 
-fn view_helper_preview(
-    item: &PlaylistItem,
+/// Zkonstruuuje GUI prezentovaného slajdu
+fn view_presentation_helper<'p>(
+    items: &'p [PlaylistItem],
+    item_index: usize,
     item_slide_index: usize,
+    mode: &PresentationMode,
+    text_scale: u8,
+    scale: f32,
+) -> Element<'p, Message> {
+    let text_size_multiplier = normalize_text_multiplier(text_scale) * scale;
+    let item = &items[item_index];
+
+    match mode {
+        PresentationMode::Normal => render_slide(item, item_slide_index, text_size_multiplier),
+        PresentationMode::Blank => blank_slide(),
+        PresentationMode::Frozen { item, item_slide } => {
+            render_slide(&items[*item], *item_slide, text_size_multiplier)
+        }
+    }
+}
+
+fn view_helper_preview<'p>(
+    items: &'p [PlaylistItem],
+    item_index: usize,
+    item_slide_index: usize,
+    mode: &'p PresentationMode,
     presentation_window_size: Size,
-    text_size_multiplier: f32,
-) -> Element<Message> {
+    text_scale: u8,
+) -> Element<'p, Message> {
     let content_build_closure = move |size: Size| {
         let scale1 = size.width / presentation_window_size.width;
         let scale2 = size.height / presentation_window_size.height;
@@ -626,23 +646,13 @@ fn view_helper_preview(
         let width = presentation_window_size.width * scale;
         let height = presentation_window_size.height * scale;
 
-        trace!(
-            "Velikost okna {}x{}, dostupná velikost pro náhled {}x{}, použiju všechnu dostupnou šířku, výška bude {}, škálování bude {}",
-            presentation_window_size.width,
-            presentation_window_size.height,
-            size.width,
-            size.height,
-            height,
-            scale
-        );
+        let slide =
+            view_presentation_helper(items, item_index, item_slide_index, mode, text_scale, scale);
+
         container(
-            container(render_slide(
-                item,
-                item_slide_index,
-                scale * text_size_multiplier,
-            ))
-            .width(Length::Fixed(width))
-            .height(Length::Fixed(height)),
+            container(slide)
+                .width(Length::Fixed(width))
+                .height(Length::Fixed(height)),
         )
         .center_x(Length::Fill)
         .into()
