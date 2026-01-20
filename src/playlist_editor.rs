@@ -25,12 +25,11 @@
 use anyhow::{Context, Result};
 use ekkles_data::{
     bible::indexing::VerseIndices,
-    playlist::{self, PlaylistItem, PlaylistItemMetadata, PlaylistMetadata},
+    playlist::{self, Playlist, PlaylistItem, PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
-    Background, Color, Element, Length, Subscription, Task, Theme,
+    Element, Length, Subscription, Task,
     alignment::{Horizontal, Vertical},
-    color,
     keyboard::{Key, Modifiers, key},
     widget::{button, column, container, row, scrollable, space, table, text, text_input},
 };
@@ -40,7 +39,7 @@ use sqlx::{Sqlite, pool::PoolConnection};
 use crate::{
     Ekkles, Screen,
     components::{
-        LazyLoadable, LazyLoadableState,
+        LazyLoadable, LazyLoadableState, OpenedPicker,
         bible_picker::{self, BiblePicker},
         playlist_item_styles::playlist_item_button_style,
         shortcuts::KeyboardShortcut,
@@ -68,7 +67,7 @@ pub enum Message {
     SaveAndExit,
     ReturnToPlaylistPicker,
     LoadPresentation,
-    StartPresentation(Presenter),
+    StartPresentation(Playlist),
     AddBiblePassage,
     OpenSongPicker,
     SelectItem(usize),
@@ -107,31 +106,6 @@ impl From<KeyboardShortcutMessage> for Message {
 impl From<Message> for crate::Message {
     fn from(value: Message) -> Self {
         crate::Message::PlaylistEditor(value)
-    }
-}
-
-#[derive(Debug)]
-enum OpenedPicker {
-    Song(song_picker::SongPicker),
-    Passage(bible_picker::BiblePicker),
-    None,
-}
-
-impl OpenedPicker {
-    fn as_song_mut(&mut self) -> Option<&mut song_picker::SongPicker> {
-        if let Self::Song(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    fn as_passage_mut(&mut self) -> Option<&mut bible_picker::BiblePicker> {
-        if let Self::Passage(v) = self {
-            Some(v)
-        } else {
-            None
-        }
     }
 }
 
@@ -406,18 +380,24 @@ impl PlaylistEditor {
                             .await
                             .context("Nelze uložit playlist")?;
 
-                        Presenter::try_new(*playlist.id(), &mut conn).await
+                        Playlist::load(*playlist.id(), &mut conn).await
                     },
                     |res| match res {
-                        Ok(presenter) => Message::StartPresentation(presenter).into(),
+                        Ok(playlist) => Message::StartPresentation(playlist).into(),
                         Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
                     },
                 )
             }
-            Message::StartPresentation(presenter) => {
-                debug!("Přecházím na prezentační obrazovku");
-                state.screen = Screen::Presenter(presenter);
-                Task::done(crate::presenter::Message::OpenPresentationWindow.into())
+            Message::StartPresentation(playlist) => {
+                let presenter = Presenter::try_new(playlist);
+                match presenter {
+                    Ok(p) => {
+                        debug!("Přecházím na prezentační obrazovku");
+                        state.screen = Screen::Presenter(p);
+                        Task::done(crate::presenter::Message::OpenPresentationWindow.into())
+                    }
+                    Err(e) => Task::done(crate::Message::FatalErrorOccured(format!("{:?}", e))),
+                }
             }
             Message::AddBiblePassage => {
                 debug!("Přecházím na výběr playlistu");

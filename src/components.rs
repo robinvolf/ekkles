@@ -186,4 +186,27 @@ impl<T> LazyLoadableState<T> {
     }
 }
 
-// }
+#[derive(Debug)]
+pub enum OpenedPicker {
+    Song(song_picker::SongPicker),
+    Passage(bible_picker::BiblePicker),
+    None,
+}
+
+impl OpenedPicker {
+    pub fn as_song_mut(&mut self) -> Option<&mut song_picker::SongPicker> {
+        if let Self::Song(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_passage_mut(&mut self) -> Option<&mut bible_picker::BiblePicker> {
+        if let Self::Passage(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+}

@@ -17,6 +17,7 @@ use log::{debug, error, trace};
 use sqlx::Sqlite;
 use sqlx::pool::PoolConnection;
 
+use crate::components::OpenedPicker;
 use crate::components::playlist_item_styles::{self, playlist_item_button_style2};
 use crate::components::shortcuts::KeyboardShortcut;
 use crate::start_screen::StartScreen;
@@ -124,7 +125,7 @@ impl From<Message> for crate::Message {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Presenter {
     /// Id okna s prezentací
     presentation_window: Option<PresentationWindow>,
@@ -143,16 +144,14 @@ pub struct Presenter {
     text_scale: u8,
     /// Klávesové zkratky
     shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 6],
+    /// Rychlé vkládání pasáží/písní při prezentaci
+    picker: OpenedPicker,
 }
 
 impl Presenter {
     /// Vytvoří nový `Presenter`. Playlist musí obsahovat alespoň jednu položku,
     /// jinak není co prezentovat a funkce vrátí Error.
-    pub async fn try_new(playlist_id: i64, conn: &mut PoolConnection<Sqlite>) -> Result<Presenter> {
-        let playlist = Playlist::load(playlist_id, conn)
-            .await
-            .context("Nelze načíst playlist z databáze")?;
-
+    pub fn try_new(playlist: Playlist) -> Result<Presenter> {
         if playlist.items.is_empty() {
             Err(anyhow!("Nelze prezentovat prázdný playlist"))
         } else {
@@ -163,6 +162,7 @@ impl Presenter {
                 mode: PresentationMode::Normal,
                 presentation_window: None,
                 text_scale: TEXT_SIZE_MULTIPLIER_DEFAULT_U8,
+                picker: OpenedPicker::None,
                 shortcuts: [
                     KeyboardShortcut::new(
                         Key::Named(key::Named::ArrowUp),
