@@ -1,7 +1,7 @@
 use iced::{
     Subscription,
     keyboard::{Key, Modifiers, key},
-    widget::{Column, column, text},
+    widget::{Column, column, rule, text},
 };
 use log::{trace, warn};
 
@@ -67,8 +67,13 @@ where
     }
 
     /// Vytvoří sloupec s nápovědou. Generický parametr `M` je tady, aby type-checker byl šťastný.
-    pub fn view<M>(shortcuts: &[Self]) -> Column<M> {
-        column(shortcuts.iter().map(|s| text(s.help_string()).into()))
+    pub fn view<'s, M: 's>(shortcuts: &'s [Self]) -> Column<'s, M> {
+        column![
+            "Nápověda",
+            rule::horizontal(1),
+            column(shortcuts.iter().map(|s| text(s.help_string()).into()))
+        ]
+        .spacing(5)
     }
 
     /// Vytvoří textovou reprezentaci pro nápovědu
@@ -77,6 +82,7 @@ where
             Key::Named(key::Named::ArrowDown) => "↓",
             Key::Named(key::Named::ArrowUp) => "↑",
             Key::Named(key::Named::Escape) => "ESC",
+            Key::Named(key::Named::Enter) => "↩",
             Key::Named(k) => {
                 warn!("Náhled pro neznámou klávesu: {:?}", k);
                 "?"

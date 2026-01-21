@@ -13,6 +13,7 @@ use ekkles_data::{
 };
 use iced::{
     Alignment, Element, Length, Padding, Subscription, Task,
+    keyboard::{Key, Modifiers, key},
     widget::{
         self, button, column, container, operation::focus, pick_list, row, scrollable, space, text,
         text_input,
@@ -27,6 +28,8 @@ use crate::{
     components::{LazyLoadable, LazyLoadableState, PickerItem},
     playlist_editor::PlaylistEditor,
 };
+
+use super::shortcuts::KeyboardShortcut;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -49,6 +52,21 @@ pub enum Message {
     FatalError(String),
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, PartialOrd)]
+enum KeyboardShortcutMessage {
+    PickPassage,
+    Return,
+}
+
+impl From<KeyboardShortcutMessage> for Message {
+    fn from(value: KeyboardShortcutMessage) -> Self {
+        match value {
+            KeyboardShortcutMessage::Return => Message::Return,
+            KeyboardShortcutMessage::PickPassage => Message::PickPassage,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct BiblePicker {
     translations: LazyLoadable<Vec<PickerItem>, Message>,
@@ -57,6 +75,7 @@ pub struct BiblePicker {
     indexes: BiblePickerIndexes,
     preview: Option<LazyLoadable<Passage, Message>>,
     err_msg: String,
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 2],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +106,20 @@ impl BiblePicker {
             indexes: BiblePickerIndexes::new(),
             preview: None,
             err_msg: String::new(),
+            shortcuts: [
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::Escape),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::Return,
+                    "Zavřít výběr pasáže",
+                ),
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::Enter),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::PickPassage,
+                    "Vybrat pasáž",
+                ),
+            ],
         }
     }
 
@@ -232,6 +265,8 @@ impl BiblePicker {
         ]
         .spacing(10);
 
+        let shortcuts_help = KeyboardShortcut::view(&self.shortcuts);
+
         Into::<Element<Message>>::into(
             container(row![
                 space().width(Length::FillPortion(1)),
@@ -252,8 +287,12 @@ impl BiblePicker {
                     .width(Length::Fill),
                 )
                 .width(Length::FillPortion(3))
+                .center_y(Length::Fill)
                 .max_width(1000),
-                space().width(Length::FillPortion(1)),
+                container(shortcuts_help)
+                    .padding(30)
+                    .align_bottom(Length::Fill)
+                    .width(Length::FillPortion(1)),
             ])
             .padding(10)
             .center(Length::Fill),
@@ -442,7 +481,7 @@ impl BiblePicker {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        KeyboardShortcut::subscription(self.shortcuts.clone()).map(Message::from)
     }
 
     /// Zvaliduje, že pasáž je korektně vybraná. Kapitola, kniha i verš jsou legální

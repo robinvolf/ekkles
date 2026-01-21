@@ -5,12 +5,13 @@ use crate::components::{LazyLoadable, LazyLoadableState, PickerItem};
 use ekkles_data::Song;
 use iced::{
     Alignment, Element, Length, Subscription, Task,
-    widget::{
-        Container, button, center, column, combo_box, container, row, rule, scrollable, space, text,
-    },
+    keyboard::{Key, Modifiers, key},
+    widget::{Container, button, column, combo_box, container, row, rule, scrollable, space, text},
 };
 use log::debug;
 use sqlx::SqlitePool;
+
+use super::shortcuts::KeyboardShortcut;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -21,8 +22,24 @@ pub enum Message {
     LoadPreview(PickerItem),
     PreviewLoaded(Song, u32),
     Return,
+    ReturnIfSelected,
     ReturnSelected(PickerItem),
     FatalError(String),
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, PartialOrd)]
+enum KeyboardShortcutMessage {
+    ReturnIfSelected,
+    Return,
+}
+
+impl From<KeyboardShortcutMessage> for Message {
+    fn from(value: KeyboardShortcutMessage) -> Self {
+        match value {
+            KeyboardShortcutMessage::Return => Message::Return,
+            KeyboardShortcutMessage::ReturnIfSelected => Message::ReturnIfSelected,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -30,6 +47,7 @@ pub struct SongPicker {
     songs: LazyLoadable<combo_box::State<PickerItem>, Message>,
     selected: Option<PickerItem>,
     preview: Option<LazyLoadable<Song, Message>>,
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 2],
 }
 
 impl SongPicker {
@@ -38,6 +56,20 @@ impl SongPicker {
             songs: LazyLoadable::new(Message::LoadSongs),
             selected: None,
             preview: None,
+            shortcuts: [
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::Escape),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::Return,
+                    "Zavřít výběr písně",
+                ),
+                KeyboardShortcut::new(
+                    Key::Named(key::Named::Enter),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::ReturnIfSelected,
+                    "Potvrdit výběr",
+                ),
+            ],
         }
     }
 
@@ -69,6 +101,8 @@ impl SongPicker {
             None => container(space()),
         };
 
+        let shortcuts_help = KeyboardShortcut::view(&self.shortcuts);
+
         Into::<Element<Message>>::into(
             container(row![
                 space().width(Length::FillPortion(1)),
@@ -99,7 +133,10 @@ impl SongPicker {
                 )
                 .width(Length::FillPortion(3))
                 .max_width(1000),
-                space().width(Length::FillPortion(1)),
+                container(shortcuts_help)
+                    .padding(30)
+                    .align_bottom(Length::Fill)
+                    .width(Length::FillPortion(1)),
             ])
             .padding(10)
             .center(Length::Fill),
@@ -183,14 +220,23 @@ impl SongPicker {
                 );
             }
             Message::SelectSong(item) => {
+                debug!("Vybraná píseň nastavena na {:?}", item);
                 self.selected = Some(item);
                 Task::none()
             }
+            Message::ReturnIfSelected => match self.selected.take() {
+                // Používáme take(), protože po ReturnSelected je výběr zavřen a self.selected není už potřeba
+                Some(i) => Task::done(Message::ReturnSelected(i)),
+                None => {
+                    debug!("Není ještě vybrána píseň, nebudu se vracet z výběru");
+                    Task::none()
+                }
+            },
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        KeyboardShortcut::subscription(self.shortcuts.clone()).map(Message::from)
     }
 }
 

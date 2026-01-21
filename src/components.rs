@@ -19,7 +19,7 @@ pub mod song_picker;
 
 /// V programu je několikrát používán [`iced::widget::combo_box()`], jehož položky musí
 /// implementovat [`Display`]. Nám ovšem při výběru jde zpravidla o `id`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct PickerItem {
     pub(crate) id: i64,
     pub(crate) name: String,
