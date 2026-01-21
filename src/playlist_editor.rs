@@ -692,9 +692,19 @@ impl PlaylistEditor {
     }
 
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        KeyboardShortcut::subscription(self.shortcuts.clone())
-            .map(Message::from)
-            .map(crate::Message::from)
+        match &self.picker {
+            OpenedPicker::Song(song_picker) => song_picker
+                .subscription()
+                .map(Message::SongPicker)
+                .map(crate::Message::from),
+            OpenedPicker::Passage(bible_picker) => bible_picker
+                .subscription()
+                .map(Message::BiblePicker)
+                .map(crate::Message::from),
+            OpenedPicker::None => KeyboardShortcut::subscription(self.shortcuts.clone())
+                .map(Message::from)
+                .map(crate::Message::from),
+        }
     }
 }
 

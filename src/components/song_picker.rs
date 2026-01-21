@@ -4,7 +4,7 @@
 use crate::components::{LazyLoadable, LazyLoadableState, PickerItem};
 use ekkles_data::Song;
 use iced::{
-    Alignment, Element, Length, Task,
+    Alignment, Element, Length, Subscription, Task,
     widget::{
         Container, button, center, column, combo_box, container, row, rule, scrollable, space, text,
     },
@@ -131,7 +131,7 @@ impl SongPicker {
                 }
             }
             Message::SongsLoaded(song_picker_items, task_id) => {
-                debug!("Písně načteny: {:#?}", &song_picker_items);
+                debug!("Načteno: {} písní", song_picker_items.len());
                 self.songs
                     .finish_loading(combo_box::State::new(song_picker_items), task_id);
 
@@ -187,6 +187,10 @@ impl SongPicker {
                 Task::none()
             }
         }
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
     }
 }
 

@@ -220,21 +220,29 @@ impl Presenter {
     }
 
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        Subscription::batch([
-            KeyboardShortcut::subscription(self.shortcuts.clone())
-                .map(Message::from)
-                .map(crate::Message::from),
-            window::resize_events()
-                .with(self.presentation_window.map(|w| w.id))
-                .filter_map(|(presentation_window_id, (id, size))| {
-                    if presentation_window_id.is_some_and(|w_id| w_id == id) {
-                        Some(Message::PresentationWindowResized(size))
-                    } else {
-                        None
-                    }
-                })
-                .map(crate::Message::from),
-        ])
+        let window_resizes = window::resize_events()
+            .with(self.presentation_window.map(|w| w.id))
+            .filter_map(|(presentation_window_id, (id, size))| {
+                if presentation_window_id.is_some_and(|w_id| w_id == id) {
+                    Some(Message::PresentationWindowResized(size))
+                } else {
+                    None
+                }
+            })
+            .map(crate::Message::from);
+
+        let picker_specific = match &self.picker {
+            OpenedPicker::Song(song_picker) => song_picker.subscription().map(Message::SongPicker),
+            OpenedPicker::Passage(bible_picker) => {
+                bible_picker.subscription().map(Message::BiblePicker)
+            }
+            OpenedPicker::None => {
+                KeyboardShortcut::subscription(self.shortcuts.clone()).map(Message::from)
+            }
+        }
+        .map(crate::Message::from);
+
+        Subscription::batch([window_resizes, picker_specific])
     }
 
     pub fn get_presentation_window_id(&self) -> Option<Id> {

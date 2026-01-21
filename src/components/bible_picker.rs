@@ -12,7 +12,7 @@ use ekkles_data::{
     playlist::{PlaylistItemMetadata, PlaylistMetadata},
 };
 use iced::{
-    Alignment, Element, Length, Padding, Task,
+    Alignment, Element, Length, Padding, Subscription, Task,
     widget::{
         self, button, column, container, operation::focus, pick_list, row, scrollable, space, text,
         text_input,
@@ -439,6 +439,10 @@ impl BiblePicker {
                 );
             }
         }
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
     }
 
     /// Zvaliduje, že pasáž je korektně vybraná. Kapitola, kniha i verš jsou legální
