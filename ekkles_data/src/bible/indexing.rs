@@ -177,9 +177,14 @@ impl Passage {
         (self.from, self.to)
     }
 
-    /// Vrátí název pasáže
+    /// Vrátí název překladu
     pub fn get_translation_name(&self) -> &str {
         &self.translation_name
+    }
+
+    /// Vrátí id překladu
+    pub fn get_translation_id(&self) -> i64 {
+        self.translation_id
     }
 
     /// Zkontroluje, že rozsah pasáže je validní (první verš je v Bibli "dřív" než poslední)

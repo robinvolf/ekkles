@@ -701,7 +701,19 @@ impl Presenter {
                 debug!("Přidávám do playlistu položku{:?}", item);
                 presenter.playlist.push_item(item);
                 presenter.picker = OpenedPicker::None;
-                Task::none()
+
+                // Na pozadí uložíme playlist, protože se do něj přidala nová položka
+                let metadata = presenter.playlist.metadata();
+                let conn = state.db.acquire();
+                let task = Task::future(async move {
+                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    metadata
+                        .update(&mut conn)
+                        .await
+                        .inspect_err(|e| error!("Nelze uložit Playlist do databáze: {e}"))
+                });
+
+                task.discard()
             }
             Message::OpenBiblePicker => {
                 debug!("Otevírám výběr pasáže");

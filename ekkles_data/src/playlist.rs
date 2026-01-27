@@ -45,6 +45,23 @@ pub enum PlaylistItemMetadata {
     Song(i64),
 }
 
+impl From<&PlaylistItem> for PlaylistItemMetadata {
+    fn from(value: &PlaylistItem) -> Self {
+        match value {
+            PlaylistItem::BiblePassage(passage) => {
+                let translation_id = passage.get_translation_id();
+                let (from, to) = passage.get_range();
+                PlaylistItemMetadata::BiblePassage {
+                    translation_id,
+                    from,
+                    to,
+                }
+            }
+            PlaylistItem::Song(song) => PlaylistItemMetadata::Song(song.id),
+        }
+    }
+}
+
 /// Vrátí seznam všech playlistů v databázi. Vrátí dvojice (ID, název) seřazené podle
 /// času vytvoření. Pokud se vyskytne chyba v databázi, vrátí Error
 pub async fn get_available(mut conn: PoolConnection<Sqlite>) -> Result<Vec<(i64, String)>> {
@@ -688,6 +705,22 @@ impl Playlist {
     /// Přidá položku playlistu `item` na poslední pozici v playlistu.
     pub fn push_item(&mut self, item: PlaylistItem) {
         self.items.push(item);
+    }
+
+    /// Vrátí reprezentaci tohoto playlistu jako metadata, vhodné k uložení.
+    pub fn metadata(&self) -> PlaylistMetadata {
+        let items = self
+            .items
+            .iter()
+            .map(PlaylistItemMetadata::from)
+            .collect::<Vec<_>>();
+
+        PlaylistMetadata {
+            id: self.id,
+            name: self.name.clone(),
+            created: self.created.clone(),
+            items,
+        }
     }
 }
 
