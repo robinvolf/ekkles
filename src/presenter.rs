@@ -23,6 +23,7 @@ use crate::components::playlist_item_styles::{self, playlist_item_button_style2}
 use crate::components::shortcuts::KeyboardShortcut;
 use crate::components::song_picker;
 use crate::components::song_picker::SongPicker;
+use crate::playlist_editor::PlaylistEditor;
 use crate::start_screen::StartScreen;
 use crate::{Ekkles, Screen};
 
@@ -563,7 +564,9 @@ impl Presenter {
                 .chain(Task::done(Message::PresentationWindowClosed.into()))
             }
             Message::PresentationWindowClosed => {
-                state.screen = Screen::StartScreen(StartScreen::new());
+                // Při ukončení prezentace se vrátíme zpátky do editoru
+                let metadata = presenter.playlist.metadata();
+                state.screen = Screen::EditPlaylist(PlaylistEditor::new(metadata));
                 Task::none()
             }
             Message::OpenPresentationWindow => {
