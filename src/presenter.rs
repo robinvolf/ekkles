@@ -119,6 +119,8 @@ impl From<KeyboardShortcutMessage> for Message {
             KeyboardShortcutMessage::NormalOuput => Message::NormalOuput,
             KeyboardShortcutMessage::FreezeOuput => Message::FreezeOuput,
             KeyboardShortcutMessage::BlankOuput => Message::BlankOuput,
+            KeyboardShortcutMessage::OpenSongPicker => Message::OpenSongPicker,
+            KeyboardShortcutMessage::OpenBiblePicker => Message::OpenBiblePicker,
         }
     }
 }
@@ -131,6 +133,8 @@ enum KeyboardShortcutMessage {
     NormalOuput,
     FreezeOuput,
     BlankOuput,
+    OpenSongPicker,
+    OpenBiblePicker,
 }
 
 impl From<Message> for crate::Message {
@@ -157,7 +161,7 @@ pub struct Presenter {
     /// Vysvětlení viz: [`TEXT_SIZE_MULTIPLIER_DEFAULT_U8`].
     text_scale: u8,
     /// Klávesové zkratky
-    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 6],
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 8],
     /// Rychlé vkládání pasáží/písní při prezentaci
     picker: OpenedPicker,
 }
@@ -197,16 +201,28 @@ impl Presenter {
                         "Ukonči prezentaci",
                     ),
                     KeyboardShortcut::new(
+                        Key::Character("p".into()),
+                        Modifiers::empty(),
+                        KeyboardShortcutMessage::OpenSongPicker,
+                        "Přidat píseň",
+                    ),
+                    KeyboardShortcut::new(
+                        Key::Character("b".into()),
+                        Modifiers::SHIFT,
+                        KeyboardShortcutMessage::OpenBiblePicker,
+                        "Přidat verše",
+                    ),
+                    KeyboardShortcut::new(
                         Key::Character("f".into()),
                         Modifiers::empty(),
                         KeyboardShortcutMessage::FreezeOuput,
-                        "Zmrazit, výstup",
+                        "Zmrazit výstup",
                     ),
                     KeyboardShortcut::new(
                         Key::Character("n".into()),
                         Modifiers::empty(),
                         KeyboardShortcutMessage::NormalOuput,
-                        "Normální, výstup",
+                        "Normální výstup",
                     ),
                     KeyboardShortcut::new(
                         Key::Character("b".into()),

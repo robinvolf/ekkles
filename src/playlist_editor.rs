@@ -88,6 +88,8 @@ enum KeyboardShortcutMessage {
     MoveSelectionDown,
     DeleteItem,
     ReturnToPlaylistPicker,
+    OpenBiblePicker,
+    OpenSongPicker,
 }
 
 impl From<KeyboardShortcutMessage> for Message {
@@ -99,6 +101,8 @@ impl From<KeyboardShortcutMessage> for Message {
             KeyboardShortcutMessage::MoveSelectionDown => Message::MoveSelectionDown,
             KeyboardShortcutMessage::DeleteItem => Message::DeleteItem,
             KeyboardShortcutMessage::ReturnToPlaylistPicker => Message::ReturnToPlaylistPicker,
+            KeyboardShortcutMessage::OpenBiblePicker => Message::AddBiblePassage,
+            KeyboardShortcutMessage::OpenSongPicker => Message::OpenSongPicker,
         }
     }
 }
@@ -123,7 +127,7 @@ pub struct PlaylistEditor {
     selected_index: Option<usize>,
     /// Aktuální výběr, překresluje aktuální okno
     picker: OpenedPicker,
-    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 6],
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 8],
 }
 
 impl PlaylistEditor {
@@ -171,6 +175,18 @@ impl PlaylistEditor {
                     Modifiers::empty(),
                     KeyboardShortcutMessage::ReturnToPlaylistPicker,
                     "Zpět na výběr playlistů",
+                ),
+                KeyboardShortcut::new(
+                    Key::Character("s".into()),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::OpenSongPicker,
+                    "Přidat Píseň",
+                ),
+                KeyboardShortcut::new(
+                    Key::Character("b".into()),
+                    Modifiers::empty(),
+                    KeyboardShortcutMessage::OpenBiblePicker,
+                    "Přidat verše",
                 ),
             ],
         }
