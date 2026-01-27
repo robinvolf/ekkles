@@ -376,7 +376,7 @@ impl Presenter {
         table(
             [
                 name_column.width(Length::FillPortion(1)),
-                preview_column.width(Length::FillPortion(5)),
+                preview_column.width(Length::FillPortion(2)),
             ],
             self.playlist.items.iter().enumerate(),
         )
