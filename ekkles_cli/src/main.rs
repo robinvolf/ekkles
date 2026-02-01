@@ -121,7 +121,7 @@ async fn run(config: Cli) -> Result<()> {
                             }
                         }
 
-                        match song.save_to_db(&db_pool).await {
+                        match song.save_new(&mut conn).await {
                             Ok(_) => {
                                 println!("[INFO]: Ukládám píseň '{}'", song.title);
                                 successes += 1;

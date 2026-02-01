@@ -34,6 +34,7 @@ pub async fn setup_db_with_bible() -> SqlitePool {
 /// a přidá do ní bibli (translation_id 0) pro testování + 2 písně (id 0 a 1).
 pub async fn setup_db_with_bible_and_songs() -> SqlitePool {
     let pool = setup_db_with_bible().await;
+    let mut conn = pool.acquire().await.unwrap();
 
     let haleluja = Song {
         id: 0,
@@ -118,8 +119,8 @@ pub async fn setup_db_with_bible_and_songs() -> SqlitePool {
         ],
     };
 
-    haleluja.save_to_db(&pool).await.unwrap();
-    christ_arose.save_to_db(&pool).await.unwrap();
+    haleluja.save_new(&mut conn).await.unwrap();
+    christ_arose.save_new(&mut conn).await.unwrap();
 
     pool
 }

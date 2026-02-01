@@ -252,7 +252,7 @@ impl PlaylistEditor {
                 .padding(30)
         ];
 
-        Into::<Element<Message>>::into(column![
+        Into::<Element<Message>>::into(
             container(row![
                 column![
                     column![
@@ -303,8 +303,8 @@ impl PlaylistEditor {
                 right_column.width(Length::FillPortion(1)),
             ])
             .padding(10)
-            .center_x(Length::FillPortion(1))
-        ])
+            .center_x(Length::FillPortion(1)),
+        )
     }
 
     pub fn view_bible_picker(picker: &BiblePicker) -> Element<Message> {

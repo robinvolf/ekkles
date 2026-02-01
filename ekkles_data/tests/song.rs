@@ -7,6 +7,7 @@ mod common;
 #[tokio::test]
 async fn save_load_happy_path() {
     let pool = common::setup_bare_db().await;
+    let mut conn = pool.acquire().await.unwrap();
 
     let mut song = Song {
         id: 0,
@@ -51,7 +52,7 @@ async fn save_load_happy_path() {
         ],
     };
 
-    let id = match song.save_to_db(&pool).await {
+    let id = match song.save_new(&mut conn).await {
         Ok(id) => id,
         Err(e) => {
             println!("{:?}", e);
@@ -73,6 +74,7 @@ async fn save_load_happy_path() {
 #[tokio::test]
 async fn save_corrupted_song() {
     let pool = common::setup_bare_db().await;
+    let mut conn = pool.acquire().await.unwrap();
 
     let song = Song {
         id: 0,
@@ -118,5 +120,5 @@ async fn save_corrupted_song() {
         ],
     };
 
-    assert!(song.save_to_db(&pool).await.is_err());
+    assert!(song.save_new(&mut conn).await.is_err());
 }

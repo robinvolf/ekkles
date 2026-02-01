@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use crate::Song;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use sqlx::{Sqlite, SqliteConnection, SqlitePool, pool::PoolConnection, query};
+use sqlx::{Connection, Sqlite, SqliteConnection, SqlitePool, pool::PoolConnection, query};
 
 const TAG_SPLIT_STRING: &str = " ";
 
 impl Song {
-    /// Uloží danou píseň do lokální SQlite databáze, ke které se připojí pomocí `pool`.
+    /// Uloží danou píseň do lokální SQlite databáze, ke které se připojí pomocí `conn`. Ukládá novou píseň, to znamená, že píseň se stejným názvem nemůže být uložena v databázi. Pole `id` dané písně je při volání této metody ignorováno.
     ///
     /// ### Návratová hodnota
     /// - Pokud vše půjde hladce vrací id uložené písně
@@ -23,11 +23,11 @@ impl Song {
     ///
     /// Pokud během ukládání písně do databáze nastane chyba, je proveden rollback celé písně.
     /// Tedy po chybě by databáze měla být ve stejném stavu jako před zavoláním této funkce.
-    pub async fn save_to_db(&self, pool: &SqlitePool) -> Result<i64> {
+    pub async fn save_new(&self, conn: &mut SqliteConnection) -> Result<i64> {
         self.check_invariants()
             .context("Nelze uložit nevalidní píseň")?;
 
-        let mut transaction = pool
+        let mut transaction = conn
             .begin()
             .await
             .context("Nelze získat připojení k databázi z poolu")?;

@@ -28,6 +28,8 @@ enum Screen {
     EditPlaylist(playlist_editor::PlaylistEditor),
     /// Prezentování playlistu
     Presenter(presenter::Presenter),
+    /// Editace písní
+    SongEditor(song_editor::Editor),
 }
 
 struct Ekkles {
@@ -97,6 +99,7 @@ impl Ekkles {
             Screen::ErrorOccurred(_) => Subscription::none(),
             Screen::EditPlaylist(editor) => editor.subscription(),
             Screen::Presenter(presenter) => presenter.subscription(),
+            Screen::SongEditor(editor) => editor.subscription(),
         };
 
         Subscription::batch([window_closed_events, screen_specific_events])
@@ -109,6 +112,7 @@ impl Ekkles {
                 Screen::ErrorOccurred(err) => error_screen::view(err),
                 Screen::EditPlaylist(editor) => editor.view().map(|msg| msg.into()),
                 Screen::Presenter(presenter) => presenter.view_control().map(|msg| msg.into()),
+                Screen::SongEditor(editor) => editor.view().map(|msg| msg.into()),
             }
         } else if let Screen::Presenter(presenter) = &self.screen
             && presenter

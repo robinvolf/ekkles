@@ -7,6 +7,7 @@ use crate::{
         song_picker::{self, SongPicker},
     },
     playlist_editor,
+    song_editor::Editor,
 };
 use anyhow::Context;
 use ekkles_data::{
@@ -129,13 +130,26 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
                     Tab::Song => {
                         debug!("Vytvářím novou píseň \"{}\"", new_name);
                         let new_song = Song {
-                            id: 0,
+                            id: 0, // Toto ID se nepoužije
                             title: new_name.to_string(),
                             author: None,
                             parts: HashMap::new(),
                             order: Vec::new(),
                         };
-                        Task::done(Message::EditSong(new_song).into())
+                        let conn = state.db.acquire();
+                        Task::perform(
+                            async move {
+                                let mut conn =
+                                    conn.await.context("Nelze získat připojení k databázi")?;
+                                Song::save_new(&new_song, &mut conn)
+                                    .await
+                                    .map(|id| Song { id, ..new_song })
+                            },
+                            |res| match res {
+                                Ok(song) => Message::EditSong(song).into(),
+                                Err(e) => crate::Message::FatalErrorOccured(format!("{:?}", e)),
+                            },
+                        )
                     }
                     Tab::Playlist => {
                         debug!("Vytvářím nový playlist \"{}\"", new_name);
@@ -194,9 +208,8 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
         }
         Message::EditSong(song) => {
             debug!("Vybrána píseň, přecházím na editaci {:#?}", song);
-            todo!("Ještě neumím editovat písně :(");
-            // state.screen = ...
-            // Task::none()
+            state.screen = Screen::SongEditor(Editor::new(song));
+            Task::none()
         }
         Message::SongPickerMsg(msg) => match msg {
             song_picker::Message::Return => Task::done(crate::Message::ShouldQuit),
