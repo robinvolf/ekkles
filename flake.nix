@@ -2,7 +2,7 @@
   description = "Build a cargo project without extra checks";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    # nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
     crane.url = "github:ipetkov/crane";
 
@@ -35,7 +35,7 @@
         # Tady přepíšeme defaultní toolchain, který Crane použije
         craneLib = (crane.mkLib pkgs).overrideToolchain (
           p:
-          p.rust-bin.stable."1.88.0".default.override {
+          p.rust-bin.stable."1.91.0".default.override {
             targets = [ "x86_64-unknown-linux-gnu" ];
           }
         );
