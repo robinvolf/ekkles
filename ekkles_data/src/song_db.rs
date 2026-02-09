@@ -69,6 +69,63 @@ impl Song {
         Ok(song_id)
     }
 
+    /// Updatuje záznam písně v databázi. Pokud se vyskytne během ukládání chyba, dojde k rollbacku (používám transakce) a vrátí Err.
+    pub async fn update(&self, conn: &mut SqliteConnection) -> Result<()> {
+        let mut transaction = conn
+            .begin()
+            .await
+            .context("Nelze získat připojení k databázi z poolu")?;
+
+        let part_order = self.order.join(TAG_SPLIT_STRING);
+
+        query!(
+            "
+            UPDATE songs SET (title, author, part_order) = ($1, $2, $3) WHERE id = $4
+            ",
+            self.title,
+            self.author,
+            part_order,
+            self.id
+        )
+        .execute(&mut *transaction)
+        .await
+        .context(format!("Nelze updatenout píseň {} v databázi", self.title))?;
+
+        query!(
+            "
+            DELETE FROM song_parts WHERE song_id = $1
+            ",
+            self.id
+        )
+        .execute(&mut *transaction)
+        .await
+        .context(format!(
+            "Nelze smazat části písně {} v databázi",
+            self.title
+        ))?;
+
+        // TODO: Toto by šlo přepsat, abych místo sekvenčního ukládání spojil všechny query
+        // do jedné future pomocí `join_all` a na tom awaitnout
+        for (tag, lyrics) in self.parts.iter() {
+            query!(
+                "INSERT INTO song_parts (song_id, tag, lyrics) VALUES ($1, $2, $3)",
+                self.id,
+                tag,
+                lyrics
+            )
+            .execute(&mut *transaction)
+            .await
+            .with_context(|| format!("Nelze uložit část {} písně {}", tag, self.title))?;
+        }
+
+        transaction
+            .commit()
+            .await
+            .context("Nelze provést COMMIT uložení písně")?;
+
+        Ok(())
+    }
+
     /// Pokud píseň s názvem `title` v databázi existuje, vrátí její `id`, jinak `None`, pokud se
     /// vystkytne při přístupu do databáze chyba nebo daná píseň neexistuje, vrátí Error.
     pub async fn exists_in_db(conn: &mut SqliteConnection, title: &str) -> Result<Option<i64>> {
@@ -80,11 +137,26 @@ impl Song {
     }
 
     /// Smaže píseň s daným `id` z databáze, pokud nastane problém vrátí Error.
-    pub async fn delete_from_db(id: i64, pool: &SqlitePool) -> Result<()> {
+    pub async fn delete_from_db(id: i64, conn: &mut SqliteConnection) -> Result<()> {
+        let mut transaction = conn
+            .begin()
+            .await
+            .context("Nelze získat připojení k databázi z poolu")?;
+
         query!("DELETE FROM songs WHERE id = $1", id)
-            .execute(pool)
+            .execute(&mut *transaction)
             .await
             .with_context(|| format!("Nelze smazat píseň s id {} z databáze", id))?;
+
+        query!("DELETE FROM song_parts WHERE song_id = $1", id)
+            .execute(&mut *transaction)
+            .await
+            .with_context(|| format!("Nelze smazat píseň s id {} z databáze", id))?;
+
+        transaction
+            .commit()
+            .await
+            .context("Nelze provést COMMIT smazání písně")?;
 
         Ok(())
     }
@@ -110,6 +182,7 @@ impl Song {
             .part_order
             .split(TAG_SPLIT_STRING)
             .map(|str| str.to_string())
+            .filter(|str| !str.is_empty())
             .collect();
 
         let mut lyrics = query!("SELECT tag, lyrics FROM song_parts WHERE song_id = $1", id)

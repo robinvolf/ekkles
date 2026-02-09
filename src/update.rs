@@ -1,4 +1,4 @@
-use crate::{Screen, bible_picker, playlist_editor, presenter};
+use crate::{Screen, bible_picker, playlist_editor, presenter, song_editor};
 use crate::{song_picker, start_screen};
 use iced::Task;
 use log::{debug, trace, warn};
@@ -31,6 +31,9 @@ impl Ekkles {
             }
             (Message::Presenter(msg), Screen::Presenter(_)) => {
                 presenter::Presenter::update(self, msg)
+            }
+            (Message::SongEditor(msg), Screen::SongEditor(_)) => {
+                song_editor::Editor::update(self, msg)
             }
             (Message::ShouldQuit, _) => {
                 debug!("Ukončuji aplikaci");

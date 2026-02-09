@@ -1,11 +1,13 @@
+use anyhow::Context;
 use ekkles_data::Song;
 use iced::{
     Element, Length, Subscription, Task,
     alignment::{Horizontal, Vertical},
     widget::{button, column, container, row, space, text, text_editor, text_input},
 };
+use log::debug;
 
-use crate::Ekkles;
+use crate::{Ekkles, Screen, start_screen::StartScreen};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -54,10 +56,54 @@ impl Editor {
     }
 
     pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
-        todo!()
+        let editor = if let Screen::SongEditor(editor) = &state.screen {
+            editor
+        } else {
+            panic!("Update pro SongEditor zavolána na jinou obrazovku");
+        };
+
+        match msg {
+            Message::Save => {
+                debug!("Ukládám píseň {:?}", editor.song);
+                let song_copy = editor.song.clone();
+                let conn = state.db.acquire();
+
+                Task::future(async move {
+                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    song_copy.update(&mut conn).await
+                })
+                .then(|res| match res {
+                    Ok(_) => Task::none(),
+                    Err(e) => Task::done(crate::Message::FatalErrorOccured(e.to_string())),
+                })
+            }
+            Message::Delete => {
+                debug!("Mažu píseň {:?}", editor.song);
+                let conn = state.db.acquire();
+                let id = editor.song.id;
+
+                Task::future(async move {
+                    let mut conn = conn.await.context("Nelze získat připojení k databázi")?;
+                    Song::delete_from_db(id, &mut conn).await
+                })
+                .then(|res| match res {
+                    Ok(_) => Task::done(Message::Exit.into()),
+                    Err(e) => Task::done(crate::Message::FatalErrorOccured(e.to_string())),
+                })
+            }
+            Message::Exit => {
+                debug!("Vracím se na startovací obrazovku");
+
+                state.screen = Screen::StartScreen(StartScreen::new());
+                Task::none()
+            }
+            Message::SaveAsNameChanged(_) => todo!(),
+            Message::SaveAs => todo!(),
+            Message::Editor(action) => todo!(),
+        }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let left_panel = column![
             column![
                 button("Uložit").on_press(Message::Save).width(Length::Fill),

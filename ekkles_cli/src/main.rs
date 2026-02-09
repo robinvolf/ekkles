@@ -103,7 +103,7 @@ async fn run(config: Cli) -> Result<()> {
                                     continue; // Přejdi na další vstupní soubor
                                 }
                                 SameNameTreatment::Overwrite => {
-                                    Song::delete_from_db(song_in_db_id.unwrap(), &db_pool).await?;
+                                    Song::delete_from_db(song_in_db_id.unwrap(), &mut conn).await?;
                                     println!("[INFO]: Přepisuju píseň '{}'", &song.title);
                                 }
                                 SameNameTreatment::Rename => {
