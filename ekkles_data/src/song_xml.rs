@@ -135,7 +135,7 @@ impl Song {
 /// ### Rozdělení
 /// Rozdělí slova do podčástí. Používá k tomu separátory, které vypadají následovně:
 /// `[` `tag` `]`, `tag` je libovolný řetězec znaků a je poté použit pro identifikaci dané části.
-fn parse_lyrics(raw_lyrics: &str) -> Vec<(PartTag, String)> {
+pub fn parse_lyrics(raw_lyrics: &str) -> Vec<(PartTag, String)> {
     // Odstranění whitespace znaků ze začátku a konce každého řádku
     let trimmed: String = raw_lyrics
         .lines()
