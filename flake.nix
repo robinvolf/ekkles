@@ -158,11 +158,20 @@
 
           # Additional dev-shell environment variables can be set directly
           # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
+          RUST_LOG = "ekkles=debug";
+          EKKLES_DB_PATH = "ekkles_data/db/database.sqlite3";
 
           # Extra inputs can be added here; cargo and rustc are provided by default.
           packages = [
-            # pkgs.ripgrep
-          ];
+            pkgs.rust-analyzer
+            pkgs.rustfmt
+            pkgs.mold # Rychlejší vícevláknový linker
+          ] ++ icedRuntimeDeps ;
+
+          shellHook = ''
+            echo "Spuštěn dev-shell pro Ekkles v $SHELL"
+            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${builtins.toString (pkgs.lib.makeLibraryPath icedRuntimeDeps)}"
+          '';
         };
       }
     );
