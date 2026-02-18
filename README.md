@@ -4,16 +4,12 @@ Rychlejší a modernější alternativa k [Opensongu](https://opensong.org/).
 
 ## TODO
 
-- Rozmysli si, jestli má smysl udržovat status playlistu při jeho editaci (clean/transient/dirty). Ukládání do DB je přece velice levné, poté může být uložení immutable a nepotřebujeme mutex, což zjednoduší GUI kód
-  - [ ] Předělat v GUI kódu pokusy o zamknutí mutexu na `try_lock()` a kdyžtak tam hodit nějakou dummy hodnotu, ať neblokujeme GUI vlákno
-  - [ ] Ukončení prezentace by tě mělo hodit zpátky na editor
-- [ ] Možnost přidávání písní/veršů za běhu
-- [ ] Přidat editor písní
+- [X] Možnost přidávání písní/veršů za běhu
+- [X] Přidat editor písní
 - [ ] Rozšiř konfiguraci (hardcoded věci), konfigurák, CLI, proměnné prostředí
 - [ ] Začleň ikonky pomocí custom fontů přes [iced_fonts](https://github.com/Redhawk18/iced_fonts)
 - [ ] Implementuj drag-and-drop pro editor playlistů
   - Problémové, používám moc novou iced verzi (custom knihovničky nefungujou), pravděpodobně lepší počkat, než bude tato funkcionalita přímo v iced
-- [ ] Lze optimalizovat některá místa, kde se mění obrazovka a místo klonování věcí lze použít [replace_with](https://docs.rs/replace_with/latest/replace_with/)
 
 ## Bugísky
 Žádné známé, hurá!
