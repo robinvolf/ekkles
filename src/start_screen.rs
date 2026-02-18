@@ -30,7 +30,7 @@ pub struct StartScreen {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Tab {
+pub enum Tab {
     Song,
     Playlist,
 }
@@ -236,13 +236,14 @@ pub fn update(state: &mut Ekkles, msg: Message) -> Task<crate::Message> {
 }
 
 impl StartScreen {
-    pub fn new() -> Self {
+    /// Vytvoří novou počáteční obrazovku s úvodním tabem
+    pub fn new(tab: Tab) -> Self {
         Self {
             playlists: LazyLoadable::new(Message::LoadPlaylists),
             song_picker: SongPicker::new(),
             new_name: String::from(""),
             err_msg: None,
-            tab: Tab::Playlist,
+            tab,
         }
     }
 
@@ -346,6 +347,6 @@ fn is_new_name_unique(name: &str, others: impl IntoIterator<Item: AsRef<str>>) -
 
 impl Default for StartScreen {
     fn default() -> Self {
-        Self::new()
+        Self::new(Tab::Playlist)
     }
 }

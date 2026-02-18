@@ -85,7 +85,7 @@ impl Ekkles {
             Self {
                 main_window_id: id,
                 db,
-                screen: Screen::StartScreen(start_screen::StartScreen::new()),
+                screen: Screen::StartScreen(start_screen::StartScreen::default()),
             },
             open_window_task.map(|id| Message::WindowOpened(id)),
         )

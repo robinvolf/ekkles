@@ -21,6 +21,7 @@ use iced::{
 use log::{debug, trace};
 
 use crate::components::shortcuts::KeyboardShortcut;
+use crate::start_screen::Tab;
 use crate::{Ekkles, Screen, start_screen::StartScreen};
 
 #[derive(Debug, Clone)]
@@ -158,7 +159,7 @@ impl Editor {
             Message::Exit => {
                 debug!("Vracím se na startovací obrazovku");
 
-                state.screen = Screen::StartScreen(StartScreen::new());
+                state.screen = Screen::StartScreen(StartScreen::new(Tab::Song));
                 Task::none()
             }
             Message::SaveAsNameChanged(name) => {

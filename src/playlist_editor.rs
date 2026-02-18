@@ -479,7 +479,8 @@ impl PlaylistEditor {
                 )
             }
             Message::ReturnToPlaylistPicker => {
-                state.screen = Screen::StartScreen(StartScreen::default());
+                state.screen =
+                    Screen::StartScreen(StartScreen::new(crate::start_screen::Tab::Playlist));
                 Task::none()
             }
             Message::SaveAndExit => {
