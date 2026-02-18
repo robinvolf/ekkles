@@ -1,19 +1,26 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::hash::RandomState;
 use std::iter::once;
 
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 use ekkles_data::Song;
 use ekkles_data::song_xml::parse_lyrics;
+use iced::keyboard::Key;
+use iced::keyboard::Modifiers;
+use iced::keyboard::key;
 use iced::widget::rule;
 use iced::widget::toggler;
 use iced::{
     Element, Length, Subscription, Task,
     alignment::{Horizontal, Vertical},
-    widget::{button, column, container, row, space, text, text_editor, text_input},
+    widget::{button, column, container, row, text, text_editor, text_input},
 };
 use log::{debug, trace};
 
+use crate::components::shortcuts::KeyboardShortcut;
 use crate::{Ekkles, Screen, start_screen::StartScreen};
 
 #[derive(Debug, Clone)]
@@ -26,10 +33,27 @@ pub enum Message {
     SavedUnderNewId(i64),
     Editor(text_editor::Action),
     ChangedOrderInputMode(OrderInput),
+    ChangedOrderManually(String),
+    AuthorNameChanged(String),
 }
 
+#[derive(Debug, Clone, Copy, Hash)]
+enum KeyboardShortcutMessage {
+    Exit,
+}
+
+impl From<KeyboardShortcutMessage> for Message {
+    fn from(value: KeyboardShortcutMessage) -> Self {
+        match value {
+            KeyboardShortcutMessage::Exit => Message::Exit,
+        }
+    }
+}
+
+/// Jestli se pořadí slok odvodí automaticky z textu
+/// nebo ho uživatel bude manuálně upravovat
 #[derive(Debug, Clone, Copy)]
-enum OrderInput {
+pub enum OrderInput {
     Automatic,
     Manual,
 }
@@ -55,6 +79,14 @@ pub struct Editor {
     editor_content: text_editor::Content,
     /// Způsob, jak se bude zadávat pořadí slok
     order_input: OrderInput,
+    /// Manuální vstup pořadí slok, držíme si ho separátně mimo `song`,
+    /// protože může být nevalidní
+    order_input_manual_buffer: String,
+    /// Chybová hláška, která se zobrazí, když je manuální vstup
+    /// pořadí slok chybný
+    order_input_manual_error: Option<String>,
+    /// Klávesové zkratky
+    shortcuts: [KeyboardShortcut<KeyboardShortcutMessage>; 1],
 }
 
 impl Editor {
@@ -76,6 +108,14 @@ impl Editor {
             save_as_err_msg: None,
             editor_content: text_editor::Content::with_text(&song_text),
             order_input: OrderInput::Automatic,
+            order_input_manual_buffer: String::new(),
+            order_input_manual_error: None,
+            shortcuts: [KeyboardShortcut::new(
+                Key::Named(key::Named::Escape),
+                Modifiers::empty(),
+                KeyboardShortcutMessage::Exit,
+                "Zpět na výběr písní",
+            )],
         }
     }
 
@@ -173,6 +213,40 @@ impl Editor {
             Message::ChangedOrderInputMode(order_input) => {
                 debug!("Nastavuji metodu vstupu na {:?}", order_input);
                 editor.order_input = order_input;
+
+                // Pokud jsme právě přepli na manuální vstup, zkopírujeme
+                // si kanonicky správné pořadí do bufferu pro manuální vstup
+                if let OrderInput::Manual = order_input {
+                    editor.order_input_manual_buffer = editor.song.order.join(" ");
+                }
+
+                Task::none()
+            }
+            Message::AuthorNameChanged(name) => {
+                editor.song.author = if name.is_empty() { None } else { Some(name) };
+                trace!("Název autora se změnil na {:?}", editor.song.author);
+                Task::none()
+            }
+            Message::ChangedOrderManually(o) => {
+                let parsed_order =
+                    parse_song_order(&o, HashSet::from_iter(editor.song.order.iter().cloned()));
+                editor.order_input_manual_buffer = o;
+
+                match parsed_order {
+                    Ok(parsed) => {
+                        trace!(
+                            "Manuální pořadí úspěšně zparsováno, nastavuji pro píseň na {:?} a vyčišťuji chybovou hlášku",
+                            &parsed
+                        );
+                        editor.song.order = parsed;
+                        editor.order_input_manual_error = None;
+                    }
+                    Err(e) => {
+                        let e_str = e.to_string();
+                        trace!("Parsování manuálního pořadí selhalo, nastavuji chybovou hlášku");
+                        editor.order_input_manual_error = Some(e_str);
+                    }
+                }
                 Task::none()
             }
         }
@@ -218,22 +292,36 @@ impl Editor {
             .join(" ");
 
         let song_order_selection = {
-            let (label, toggle_state, toggle_msg) = match self.order_input {
-                OrderInput::Automatic => ("Automaticky", true, None),
+            let toggle_msg = move |b: bool| match b {
+                true => Message::ChangedOrderInputMode(OrderInput::Automatic),
+                false => Message::ChangedOrderInputMode(OrderInput::Manual),
+            };
+            let (label, toggle_state, order_content) = match &self.order_input {
+                OrderInput::Automatic => ("Automaticky", true, Element::from(text(song_order))),
                 OrderInput::Manual => (
                     "Manuálně",
                     false,
-                    Some(|_| Message::ChangedOrderInputMode(OrderInput::Manual)),
+                    Element::from(
+                        text_input("", &self.order_input_manual_buffer)
+                            .on_input(Message::ChangedOrderManually),
+                    ),
                 ),
             };
 
-            row![
-                toggler(toggle_state)
-                    .on_toggle_maybe(toggle_msg)
-                    .label(label),
-                text(song_order),
+            column![
+                row![
+                    order_content,
+                    container(toggler(toggle_state).on_toggle(toggle_msg).label(label))
+                        .align_right(Length::Fill),
+                ]
+                .spacing(5),
+                text(
+                    self.order_input_manual_error
+                        .as_ref()
+                        .map_or("", String::as_str)
+                )
+                .style(text::danger)
             ]
-            .spacing(5)
         };
 
         let middle_panel = column![
@@ -242,7 +330,7 @@ impl Editor {
             text("Slova písně"),
             text_editor(&self.editor_content)
                 .on_action(Message::Editor)
-                .max_height(600),
+                .max_height(400),
             rule::horizontal(1),
             text("Pořadí slok"),
             song_order_selection,
@@ -252,6 +340,7 @@ impl Editor {
                 "Autor",
                 self.song.author.as_ref().map_or("", String::as_str)
             )
+            .on_input(Message::AuthorNameChanged)
         ]
         .spacing(10)
         .width(Length::FillPortion(2));
@@ -269,11 +358,15 @@ impl Editor {
                 .into()
         });
 
-        let right_panel = column![text("Náhled slok"), column(parsed_preview)]
-            .spacing(10)
-            .padding(30)
-            .width(Length::FillPortion(1))
-            .height(Length::Fill);
+        let right_panel = column![
+            text("Náhled slok"),
+            column(parsed_preview),
+            container(KeyboardShortcut::view(&self.shortcuts)).align_bottom(Length::Fill)
+        ]
+        .spacing(10)
+        .padding(30)
+        .width(Length::FillPortion(1))
+        .height(Length::Fill);
 
         Into::<Element<Message>>::into(
             container(row![left_panel, middle_panel, right_panel]).padding(10),
@@ -281,6 +374,42 @@ impl Editor {
     }
 
     pub fn subscription(&self) -> Subscription<crate::Message> {
-        Subscription::none()
+        KeyboardShortcut::subscription(self.shortcuts.clone())
+            .map(Message::from)
+            .map(crate::Message::from)
     }
+}
+
+/// Pokusí se zparsovat `raw_order` pomocí `parsed_order_tags`. Zajistí, že:
+/// - Každá sloka je alespoň jedenkrát přítomná
+/// - Neexistuje sloka, která by nebyla v `parsed_order_tags`
+fn parse_song_order(raw_order: &str, parsed_order_tags: HashSet<String>) -> Result<Vec<String>> {
+    let order = raw_order
+        .split_whitespace()
+        .map(String::from)
+        .collect::<Vec<String>>();
+
+    let order_as_set = HashSet::<String, RandomState>::from_iter(order.iter().cloned());
+
+    let surplus_tags = order_as_set
+        .difference(&parsed_order_tags)
+        .collect::<Vec<_>>();
+    if surplus_tags.len() > 0 {
+        bail!(
+            "Manuálně zadané pořadí obsahuje tagy navíc ({:?})",
+            surplus_tags
+        );
+    }
+
+    let not_represented_tags = parsed_order_tags
+        .difference(&order_as_set)
+        .collect::<Vec<_>>();
+    if not_represented_tags.len() > 0 {
+        bail!(
+            "V manuálně zadaném pořadí chybí tagy({:?})",
+            not_represented_tags
+        );
+    }
+
+    Ok(order)
 }
